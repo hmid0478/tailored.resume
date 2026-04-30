@@ -1942,13 +1942,48 @@ class ResumePDF(FPDF):
         # If template enables inline **bold** markdown, route to the rich-text bullet.
         if self.cfg.get("bullet_inline_bold"):
             return self._bullet_inline_bold(text)
-        self.set_font("Helvetica", "", 9.5)
-        self.set_text_color(*self.BODY)
+        text = _clean_text(text)
+        size = 9.5
+        line_h = 4.5
         indent = 8
         bullet_x = self.l_margin + indent
-        self.circle(bullet_x + 1, self.get_y() + 2.2, 0.8, style="F")
-        self.set_x(bullet_x + 5)
-        self.multi_cell(self.w - self.r_margin - self.get_x(), 4.5, _clean_text(text))
+        text_x = bullet_x + 5
+        text_w = self.w - self.r_margin - text_x
+
+        self.set_font("Helvetica", "", size)
+        self.set_text_color(*self.BODY)
+
+        # Manual word-wrap so wrapped lines stay under text_x (hanging indent),
+        # rather than snapping back to the left margin like multi_cell does.
+        tokens = [t for t in re.split(r"(\s+)", text) if t]
+        lines = []
+        cur, cur_w = [], 0.0
+        for tok in tokens:
+            tw = self.get_string_width(tok)
+            if cur and (cur_w + tw) > text_w:
+                line_text = "".join(cur).rstrip()
+                if line_text:
+                    lines.append(line_text)
+                if tok.isspace():
+                    cur, cur_w = [], 0.0
+                else:
+                    cur, cur_w = [tok], tw
+            else:
+                cur.append(tok)
+                cur_w += tw
+        if cur:
+            line_text = "".join(cur).rstrip()
+            if line_text:
+                lines.append(line_text)
+        if not lines:
+            lines = [""]
+
+        for i, line in enumerate(lines):
+            if i == 0:
+                self.circle(bullet_x + 1, self.get_y() + line_h * 0.45, 0.8, style="F")
+            self.set_x(text_x)
+            self.cell(text_w, line_h, line)
+            self.ln(line_h)
         self.ln(0.5)
 
     def _bullet_inline_bold(self, text):
@@ -2018,13 +2053,51 @@ class ResumePDF(FPDF):
 
     def list_bullet(self, text):
         """Render a bullet for simple lists (certs, awards, etc.) using template bullet style."""
-        x = self.get_x()
-        self.set_font("Helvetica", "", 9.5)
-        self.set_text_color(*self.BODY)
+        text = _clean_text(text)
+        size = 9.5
+        line_h = 4.5
         indent = 8
-        self.set_x(x + indent)
-        self.cell(5, 4.5, self.cfg.get("skill_bullet", "-"))
-        self.multi_cell(self.w - self.r_margin - self.get_x(), 4.5, _clean_text(text))
+        glyph = self.cfg.get("skill_bullet", "-")
+        glyph_w = 5
+        x0 = self.get_x()
+        bullet_x = x0 + indent
+        text_x = bullet_x + glyph_w
+        text_w = self.w - self.r_margin - text_x
+
+        self.set_font("Helvetica", "", size)
+        self.set_text_color(*self.BODY)
+
+        tokens = [t for t in re.split(r"(\s+)", text) if t]
+        lines = []
+        cur, cur_w = [], 0.0
+        for tok in tokens:
+            tw = self.get_string_width(tok)
+            if cur and (cur_w + tw) > text_w:
+                line_text = "".join(cur).rstrip()
+                if line_text:
+                    lines.append(line_text)
+                if tok.isspace():
+                    cur, cur_w = [], 0.0
+                else:
+                    cur, cur_w = [tok], tw
+            else:
+                cur.append(tok)
+                cur_w += tw
+        if cur:
+            line_text = "".join(cur).rstrip()
+            if line_text:
+                lines.append(line_text)
+        if not lines:
+            lines = [""]
+
+        for i, line in enumerate(lines):
+            if i == 0:
+                self.set_x(bullet_x)
+                self.cell(glyph_w, line_h, glyph)
+            else:
+                self.set_x(text_x)
+            self.cell(text_w, line_h, line)
+            self.ln(line_h)
         self.ln(0.5)
 
 
