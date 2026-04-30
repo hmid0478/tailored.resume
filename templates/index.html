@@ -40,17 +40,27 @@
         <div class="api-key-group api-key-group-provider">
           <label for="ai-provider">AI Provider</label>
           <select id="ai-provider" class="provider-select">
-            <option value="claude">Claude</option>
-            <option value="gemini">Gemini</option>
+            <option value="anthropic">Anthropic (Claude)</option>
+            <option value="gemini">Google Gemini</option>
+            <option value="openai">OpenAI</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="groq">Groq</option>
+            <option value="together">Together AI</option>
+            <option value="ollama">Ollama (local)</option>
+            <option value="openai_compatible">OpenAI-compatible (custom)</option>
           </select>
         </div>
-        <div class="api-key-group" id="claude-key-group">
-          <label for="api-key">Anthropic API Key</label>
-          <input type="password" id="api-key" placeholder="sk-ant-api03-..." autocomplete="off" />
+        <div class="api-key-group">
+          <label for="ai-model">Model</label>
+          <input type="text" id="ai-model" placeholder="e.g. claude-sonnet-4-5-20250929" autocomplete="off" />
         </div>
-        <div class="api-key-group" id="gemini-key-group" style="display: none;">
-          <label for="gemini-key">Gemini API Key</label>
-          <input type="password" id="gemini-key" placeholder="AIza..." autocomplete="off" />
+        <div class="api-key-group" id="provider-key-group">
+          <label for="provider-key" id="provider-key-label">API Key</label>
+          <input type="password" id="provider-key" placeholder="" autocomplete="off" />
+        </div>
+        <div class="api-key-group" id="base-url-group" style="display: none;">
+          <label for="base-url">Base URL</label>
+          <input type="text" id="base-url" placeholder="http://localhost:1234/v1" autocomplete="off" />
         </div>
         <div class="api-key-group">
           <label for="apify-key">Apify API Token <span class="label-hint">(for URL scraping)</span></label>
@@ -130,11 +140,24 @@
           </div>
           <div class="scrape-status" id="scrape-status"></div>
           <textarea id="jd-text" rows="10" placeholder="Paste the full job description here — or enter a URL above and click Scrape JD.&#10;&#10;This is the only thing you need to change for each new application."></textarea>
+
+          <!-- JD keyword preview -->
+          <div class="kw-preview-row">
+            <button type="button" class="btn btn-secondary btn-sm" id="kw-preview-btn">Preview keywords (free)</button>
+            <button type="button" class="btn btn-secondary btn-sm" id="kw-preview-ai-btn" title="Use the AI to extract the same keywords the ATS scorer will look for. Costs tokens.">Preview with AI</button>
+            <span class="kw-preview-status" id="kw-preview-status"></span>
+          </div>
+          <div class="kw-preview-cloud" id="kw-preview-cloud" style="display: none;"></div>
         </div>
       </div>
 
       <!-- Submit -->
       <div class="action-row">
+        <label class="fast-mode-toggle">
+          <input type="checkbox" id="fast-mode-checkbox" />
+          <span>Fast mode</span>
+          <span class="label-hint">— skip ATS auto-fix loop (3-6× faster, no score)</span>
+        </label>
         <button type="submit" class="btn btn-primary">Tailor My Resume</button>
       </div>
     </form>
@@ -145,12 +168,53 @@
         <h2>Tailored Resume</h2>
         <div class="download-controls">
           <select id="template-select" class="template-select">
+            <option value="minimal_clean">Minimal Clean</option>
             <option value="modern_green">Modern Green</option>
             <option value="classic_blue">Classic Blue</option>
             <option value="universal">Universal</option>
           </select>
-          <button class="btn btn-success" id="download-btn">Download PDF</button>
+          <div class="download-with-fields">
+            <div class="dl-fields">
+              <input type="text" id="dl-company" class="dl-field-input" placeholder="Company name" autocomplete="organization" title="Used in the PDF filename" />
+              <span class="dl-field-sep">-</span>
+              <input type="text" id="dl-title" class="dl-field-input" placeholder="Job title" autocomplete="organization-title" title="Used in the PDF filename" />
+              <span class="dl-field-ext">.pdf</span>
+            </div>
+            <button class="btn btn-success" id="download-btn">Download PDF</button>
+          </div>
+          <div class="dl-filename-preview"><code id="filename-preview">resume.pdf</code></div>
         </div>
+      </div>
+
+      <!-- ATS Score panel -->
+      <div class="ats-panel" id="ats-panel" style="display: none;">
+        <div class="ats-summary">
+          <div class="ats-score" id="ats-score-badge">
+            <span class="ats-score-num" id="ats-score-num">—</span>
+            <span class="ats-score-label">ATS match</span>
+          </div>
+          <div class="ats-meta">
+            <div class="ats-target" id="ats-target-line"></div>
+            <div class="ats-notes" id="ats-notes-line"></div>
+          </div>
+        </div>
+        <div class="ats-keywords">
+          <div class="ats-kw-block">
+            <div class="ats-kw-title">Matched keywords</div>
+            <div class="ats-kw-chips" id="ats-matched-chips"></div>
+          </div>
+          <div class="ats-kw-block">
+            <div class="ats-kw-title">Missing keywords <span class="label-hint">(only add what your real experience supports)</span></div>
+            <div class="ats-kw-chips" id="ats-missing-chips"></div>
+          </div>
+        </div>
+
+        <!-- Auto-fix diff (only shown when remediation ran) -->
+        <div class="ats-diff-row" id="ats-diff-row" style="display: none;">
+          <button type="button" class="btn btn-secondary btn-sm" id="ats-diff-toggle">View auto-fix changes</button>
+          <span class="ats-diff-summary" id="ats-diff-summary"></span>
+        </div>
+        <div class="ats-diff-panel" id="ats-diff-panel" style="display: none;"></div>
       </div>
 
       <!-- Editable contact fields -->
