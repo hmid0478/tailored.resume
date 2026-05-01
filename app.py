@@ -1978,9 +1978,14 @@ class ResumePDF(FPDF):
         if not lines:
             lines = [""]
 
+        # Vertically center the bullet glyph with the cap-middle of the first
+        # line of text. fpdf2.circle treats (x, y) as the *center* of the
+        # circle, and the cap-middle of 9.5pt Helvetica inside a 4.5mm cell
+        # sits at roughly y + line_h * 0.55 — calibrated empirically.
+        glyph_cy = self.get_y() + line_h * 0.55
         for i, line in enumerate(lines):
             if i == 0:
-                self.circle(bullet_x + 1, self.get_y() + line_h * 0.45, 0.8, style="F")
+                self.circle(bullet_x + 1, glyph_cy, 0.8, style="F")
             self.set_x(text_x)
             self.cell(text_w, line_h, line)
             self.ln(line_h)
@@ -2038,12 +2043,14 @@ class ResumePDF(FPDF):
             if cur:
                 lines.append(cur)
 
-        # Render
+        # Render. Center the glyph vertically with the cap-middle of the first
+        # line — same calibration as bullet() above.
         self.set_text_color(*body_color)
         glyph_r = self.cfg.get("bullet_glyph_size", 0.85)
+        glyph_cy = self.get_y() + line_h * 0.55
         for i, line in enumerate(lines):
             if i == 0:
-                self.circle(bullet_x + 1, self.get_y() + line_h * 0.45, glyph_r, style="F")
+                self.circle(bullet_x + 1, glyph_cy, glyph_r, style="F")
             self.set_x(text_x)
             for weight, tok in line:
                 self.set_font("Helvetica", weight, size)
