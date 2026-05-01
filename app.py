@@ -1978,6 +1978,13 @@ class ResumePDF(FPDF):
         if not lines:
             lines = [""]
 
+        # If the first line wouldn't fit on the current page, force a page
+        # break BEFORE drawing the glyph. Otherwise the circle is rendered
+        # at the bottom of page N while the cell auto-breaks and the text
+        # lands on page N+1, leaving an orphaned bullet.
+        if self.get_y() + line_h > self.h - self.b_margin:
+            self.add_page()
+
         # Vertically center the bullet glyph with the cap-middle of the first
         # line of text. fpdf2.circle treats (x, y) as the *center* of the
         # circle, and the cap-middle of 9.5pt Helvetica inside a 4.5mm cell
@@ -2043,6 +2050,11 @@ class ResumePDF(FPDF):
             if cur:
                 lines.append(cur)
 
+        # Page-break guard — keep the glyph on the same page as the first
+        # text line (see bullet() for rationale).
+        if self.get_y() + line_h > self.h - self.b_margin:
+            self.add_page()
+
         # Render. Center the glyph vertically with the cap-middle of the first
         # line — same calibration as bullet() above.
         self.set_text_color(*body_color)
@@ -2096,6 +2108,10 @@ class ResumePDF(FPDF):
                 lines.append(line_text)
         if not lines:
             lines = [""]
+
+        # Keep the glyph on the same page as the first text line.
+        if self.get_y() + line_h > self.h - self.b_margin:
+            self.add_page()
 
         for i, line in enumerate(lines):
             if i == 0:
