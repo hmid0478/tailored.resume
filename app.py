@@ -178,6 +178,26 @@ def _fix_contact_urls(text: str) -> str:
     return text
 
 
+# Leading label like "Email:", "Phone -", "LinkedIn:" on a contact fragment.
+_CONTACT_LABEL_RE = re.compile(
+    r"^\s*(e-?mail|phone|tel(?:ephone)?|mobile|cell|linked\s?in|git\s?hub|gitlab|"
+    r"portfolio|web\s?site|website|web|url|address|location|contact)\s*[:\-–—]\s*",
+    re.IGNORECASE,
+)
+
+
+def _strip_contact_labels(contact: str) -> str:
+    """Drop 'Email:' / 'Phone:' / 'LinkedIn:' style prefixes so the raw detail shows directly."""
+    if not contact:
+        return contact
+    cleaned = []
+    for part in contact.split("|"):
+        p = _CONTACT_LABEL_RE.sub("", part.strip()).strip()
+        if p:
+            cleaned.append(p)
+    return " | ".join(cleaned)
+
+
 def extract_personal_info_docx(file_bytes: bytes) -> dict:
     """Extract name, contact details from DOCX tables/headers before AI touches it."""
     from docx import Document
@@ -211,10 +231,10 @@ def extract_personal_info_docx(file_bytes: bytes) -> dict:
             # Only check the first table (header table)
             break
 
-    # Clean up contact: collapse whitespace, normalize separators, repair URLs.
+    # Clean up contact: collapse whitespace, normalize separators, repair URLs, drop labels.
     if info["contact"]:
         info["contact"] = re.sub(r"\s+", " ", info["contact"]).strip()
-        info["contact"] = _fix_contact_urls(info["contact"])
+        info["contact"] = _strip_contact_labels(_fix_contact_urls(info["contact"]))
 
     return info
 
@@ -253,7 +273,7 @@ def extract_personal_info_text(resume_text: str) -> dict:
         raw_contact = re.sub(r"\s{2,}", " ", raw_contact)
         # Collapse multiple pipes
         raw_contact = re.sub(r"\|\s*\|", "|", raw_contact)
-        info["contact"] = _fix_contact_urls(raw_contact.strip())
+        info["contact"] = _strip_contact_labels(_fix_contact_urls(raw_contact.strip()))
 
     # Also clean name
     if info["name"]:
@@ -2135,7 +2155,7 @@ def generate_pdf(data: dict, template: str = "modern_green") -> bytes:
     pdf.ln(2)
 
     # Contact — use multi_cell so a long contact line WRAPS instead of running off the page.
-    contact = _fix_contact_urls(_clean_text(data.get("contact", "")))
+    contact = _strip_contact_labels(_fix_contact_urls(_clean_text(data.get("contact", ""))))
     if contact:
         pdf.set_font("Helvetica", "", 9.5)
         pdf.set_text_color(*pdf.GRAY)
