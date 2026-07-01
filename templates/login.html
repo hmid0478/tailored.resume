@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign in · Resume Tailor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/auth.css" />
+</head>
+<body>
+  <div class="auth-wrap">
+    <div class="auth-card">
+      <div class="auth-logo"><h1>Resume <span class="accent">Tailor</span></h1></div>
+      <p class="auth-sub">Sign in to tailor and manage your resumes.</p>
+
+      <div class="auth-msg" id="auth-msg"></div>
+
+      <form id="login-form">
+        <div class="form-group">
+          <label for="email">Email</label>
+          <input type="email" id="email" autocomplete="username" placeholder="you@example.com" required />
+        </div>
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input type="password" id="password" autocomplete="current-password" placeholder="Your password" required />
+        </div>
+        <button type="submit" class="btn btn-primary" id="login-btn">Sign in</button>
+      </form>
+
+      <div class="auth-foot">
+        Don't have an account? Ask your administrator to create one.<br />
+        <a href="/admin">Admin portal →</a>
+      </div>
+    </div>
+  </div>
+  <script src="/static/login.js"></script>
+</body>
+</html>

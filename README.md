@@ -164,12 +164,23 @@ The improve pass is a **combined** score+improve call that returns both the new 
 
 | Method | Endpoint | Description |
 |---|---|---|
-| GET | `/` | Serve the app |
-| POST | `/api/tailor` | Tailor a resume (multipart: resume file + JD + provider + key + model + base_url + fast_mode) — returns `{data, ats}` |
-| POST | `/api/jd-keywords` | Preview the keywords the ATS will score against (mode: `heuristic` is free / no AI; `ai` uses tokens) |
-| POST | `/api/scrape-jd` | Scrape a JD from a URL via Apify |
-| POST | `/api/answer-questions` | Generate Q&A answers from JD + tailored resume |
-| POST | `/api/download-pdf` | Render a tailored resume JSON as PDF (accepts `template` parameter) |
+| GET | `/` | Serve the app (redirects to `/login` client-side if not signed in) |
+| GET | `/login` | User login page |
+| GET | `/admin` | Admin portal (login + user management) |
+| POST | `/api/login` | User login → signed bearer token |
+| GET | `/api/me` | Current signed-in identity (requires user token) |
+| POST | `/api/admin/login` | Admin login (fixed credentials) → admin token |
+| GET / POST | `/api/admin/users` | List / create users (admin token) |
+| DELETE | `/api/admin/users/<email>` | Delete a user and all their resumes (admin token) |
+| GET / POST | `/api/resumes` | List / save the signed-in user's private resumes |
+| GET / DELETE | `/api/resumes/<id>` | Fetch / delete one of the user's resumes |
+| POST | `/api/tailor` | Tailor a resume (requires user token) — returns `{data, ats}` |
+| POST | `/api/jd-keywords` | Preview the keywords the ATS will score against (requires user token) |
+| POST | `/api/scrape-jd` | Scrape a JD from a URL via Apify (requires user token) |
+| POST | `/api/answer-questions` | Generate Q&A answers from JD + tailored resume (requires user token) |
+| POST | `/api/download-pdf` | Render a tailored resume JSON as PDF (requires user token) |
+
+All `/api/*` routes except `/api/login` and `/api/admin/login` require a valid `Authorization: Bearer <token>` header. The frontend attaches this automatically and redirects to `/login` on a `401`.
 
 ## Tunables
 
@@ -184,6 +195,54 @@ ATS_NO_PROGRESS_STOP = 2       # bail out after N consecutive passes with no sco
 
 Bump `ATS_MAX_IMPROVE_PASSES` higher if you want it to grind harder; lower `ATS_NO_PROGRESS_STOP` to fail faster on hopeless cases.
 
+## Authentication & Multi-User
+
+The app is private. The first page every visitor sees is `/login`. Users sign in with
+credentials **created by the admin** — there is no self-signup.
+
+- **Admin portal** — `/admin`. Separate login, fixed credentials (below). The admin
+  creates and deletes users (email + password). Each created user can then sign in at `/login`.
+- **Per-user isolation** — every user's tailored resumes are stored server-side keyed
+  by their email and are only visible to them (`/api/resumes`). Client-side app state
+  (JD, keys, tracker) is also namespaced per user in the browser.
+- **Tokens** — login returns a signed, stateless bearer token (7-day expiry) — no
+  server-side session store, which is what keeps it working on serverless.
+
+### Admin credentials
+
+Defaults (overridable via env vars `ADMIN_EMAIL` / `ADMIN_PASSWORD`):
+
+```
+email:    contact.hf3@gmail.com
+password: @Uckhan@6435
+```
+
+### Storage backend
+
+User accounts and saved resumes need persistent storage. Selection is automatic:
+
+- **Upstash Redis** (production) — used when `UPSTASH_REDIS_REST_URL` +
+  `UPSTASH_REDIS_REST_TOKEN` (or Vercel KV's `KV_REST_API_URL` / `KV_REST_API_TOKEN`)
+  are set. Stateless HTTPS REST — ideal for Vercel serverless.
+- **Local JSON file** (dev fallback) — used automatically when no Redis creds are
+  present. Writes to `./.data/rt_store.json` locally so you can run with zero setup.
+  On Vercel without Redis this falls back to `/tmp`, which is **ephemeral** — set up
+  Upstash for any real deployment.
+
+### Required environment variables (production)
+
+| Variable | Required? | Purpose |
+|---|---|---|
+| `APP_SECRET` | **Yes** | Signs auth tokens. Use a long random string. Without it, tokens use an insecure dev fallback. |
+| `UPSTASH_REDIS_REST_URL` | **Yes** (prod) | Upstash Redis REST endpoint. |
+| `UPSTASH_REDIS_REST_TOKEN` | **Yes** (prod) | Upstash Redis REST token. |
+| `ADMIN_EMAIL` | No | Override the default admin email. |
+| `ADMIN_PASSWORD` | No | Override the default admin password. |
+
+To provision Upstash on Vercel: **Storage → Marketplace → Upstash for Redis → Connect
+to project**. Vercel injects the two `UPSTASH_REDIS_REST_*` vars automatically. Then add
+`APP_SECRET` under **Settings → Environment Variables** and redeploy.
+
 ## Deployment (Vercel)
 
 The repo includes `vercel.json` and `api/index.py` so it can be deployed straight to Vercel as a serverless Python function.
@@ -193,8 +252,10 @@ The repo includes `vercel.json` and `api/index.py` so it can be deployed straigh
 1. Push the repo to GitHub (or connect from your Git provider).
 2. On https://vercel.com/new, import the repo. Vercel auto-detects the Python build via `vercel.json`.
 3. **Do NOT set any environment variables for AI keys** — keys are entered in the browser per-request and stored client-side.
-4. (Optional) Set `FLASK_DEBUG=0` (default).
-5. Deploy. The first cold start takes ~3–5 seconds; subsequent requests are warm.
+4. **Add auth/storage env vars** (see [Authentication & Multi-User](#authentication--multi-user)): connect **Upstash for Redis** from the Storage tab, and set `APP_SECRET` to a long random string. Optionally override `ADMIN_EMAIL` / `ADMIN_PASSWORD`.
+5. (Optional) Set `FLASK_DEBUG=0` (default).
+6. Deploy. The first cold start takes ~3–5 seconds; subsequent requests are warm.
+7. Visit `/admin`, sign in with the admin credentials, and create your first user.
 
 ### Tier requirements (important)
 

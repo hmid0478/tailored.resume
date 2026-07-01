@@ -2,7 +2,33 @@
    Resume Tailor — Frontend Logic
    ───────────────────────────────────────────── */
 
+// ── Auth gate ──
+// The app is private: without a valid token we bounce to the login page.
+// Throwing here stops the rest of this script from running while we navigate away.
+const AUTH_TOKEN = localStorage.getItem("rt_auth_token");
+const AUTH_EMAIL = (localStorage.getItem("rt_auth_email") || "").trim().toLowerCase();
+if (!AUTH_TOKEN) {
+  window.location.replace("/login");
+  throw new Error("Not authenticated — redirecting to /login");
+}
+// Every localStorage key the app writes is namespaced per user, so two people
+// sharing a browser never see each other's JD, keys, tracker, or results.
+const USER_PREFIX = "u:" + AUTH_EMAIL + ":";
+
+// Fetch wrapper that attaches the bearer token and handles session expiry.
+async function authFetch(url, opts = {}) {
+  const headers = Object.assign({}, opts.headers, { Authorization: "Bearer " + AUTH_TOKEN });
+  const res = await fetch(url, Object.assign({}, opts, { headers }));
+  if (res.status === 401) {
+    localStorage.removeItem("rt_auth_token");
+    window.location.replace("/login");
+    throw new Error("Your session expired. Please log in again.");
+  }
+  return res;
+}
+
 let tailoredData = null;
+let currentResumeId = null;  // server id of the resume currently in the preview
 let savedJDText = "";  // Preserved JD context for Q&A
 let scrapedMetadata = null;  // Metadata from last URL scrape
 let lastAtsReport = null;     // Most recent ATS score report
@@ -44,17 +70,20 @@ const PROVIDER_META = {
   openai_compatible: { label: "API Key",    model: "",                             keyPh: "...",               needsBase: true, defaultBase: "http://localhost:1234/v1" },
 };
 
+// All app state is namespaced per signed-in user (see USER_PREFIX).
+function _nsKey(key) { return USER_PREFIX + key; }
+
 function saveToStorage(key, value) {
-  try { localStorage.setItem(key, typeof value === "string" ? value : JSON.stringify(value)); } catch {}
+  try { localStorage.setItem(_nsKey(key), typeof value === "string" ? value : JSON.stringify(value)); } catch {}
 }
 
 function loadFromStorage(key) {
-  try { return localStorage.getItem(key); } catch { return null; }
+  try { return localStorage.getItem(_nsKey(key)); } catch { return null; }
 }
 
 function loadJSONFromStorage(key) {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = localStorage.getItem(_nsKey(key));
     return raw ? JSON.parse(raw) : null;
   } catch { return null; }
 }
@@ -427,7 +456,7 @@ form.addEventListener("submit", async (e) => {
   startLoadingSteps();
 
   try {
-    const res = await fetch("/api/tailor", {
+    const res = await authFetch("/api/tailor", {
       method: "POST",
       body: fd,
     });
@@ -447,6 +476,10 @@ form.addEventListener("submit", async (e) => {
     renderResults(tailoredData);
     renderAtsPanel(lastAtsReport);
     resultsSection.classList.add("active");
+
+    // Persist to the user's private, server-side resume library.
+    currentResumeId = null;
+    saveResumeToServer(jd);
 
     // Auto-add tracker entry
     const jdUrl = document.getElementById("jd-url").value.trim();
@@ -1119,7 +1152,7 @@ downloadBtn.addEventListener("click", async () => {
       template: loadFromStorage(STORAGE_KEYS.pdfTemplate) || "modern_green",
     };
 
-    const res = await fetch("/api/download-pdf", {
+    const res = await authFetch("/api/download-pdf", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(pdfData),
@@ -1173,7 +1206,7 @@ qaSubmitBtn.addEventListener("click", async () => {
   qaResults.innerHTML = "";
 
   try {
-    const res = await fetch("/api/answer-questions", {
+    const res = await authFetch("/api/answer-questions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1292,7 +1325,7 @@ async function previewKeywords(useAi) {
   }
 
   try {
-    const res = await fetch("/api/jd-keywords", {
+    const res = await authFetch("/api/jd-keywords", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -1362,7 +1395,7 @@ scrapeBtn.addEventListener("click", async () => {
   scrapeStatus.className = "scrape-status loading";
 
   try {
-    const res = await fetch("/api/scrape-jd", {
+    const res = await authFetch("/api/scrape-jd", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ apify_token: apifyKey, url: jdUrl }),
@@ -1576,6 +1609,164 @@ trackerClearBtn.addEventListener("click", () => {
   renderTracker();
 });
 
+// ── User bar / logout ──
+(function initUserBar() {
+  const emailEl = document.getElementById("user-bar-email");
+  if (emailEl) emailEl.textContent = AUTH_EMAIL || "";
+  const logoutBtn = document.getElementById("logout-btn");
+  if (logoutBtn) {
+    logoutBtn.addEventListener("click", () => {
+      localStorage.removeItem("rt_auth_token");
+      localStorage.removeItem("rt_auth_email");
+      window.location.replace("/login");
+    });
+  }
+})();
+
+// ── My Resumes (per-user, server-side) ──
+const savedListEl = document.getElementById("saved-list");
+const savedEmptyEl = document.getElementById("saved-empty");
+const savedCountEl = document.getElementById("saved-count");
+
+function _resumeCompanyGuess() {
+  if (scrapedMetadata && scrapedMetadata.company) return scrapedMetadata.company;
+  const c = (dlCompanyInput && dlCompanyInput.value || "").trim();
+  if (c) return c;
+  return _autoCompanyName();
+}
+
+async function saveResumeToServer(jd) {
+  if (!tailoredData) return;
+  try {
+    const res = await authFetch("/api/resumes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: tailoredData.name || "",
+        title: tailoredData.title || "",
+        company: _resumeCompanyGuess(),
+        jd: jd || savedJDText || "",
+        data: tailoredData,
+        ats: lastAtsReport || null,
+      }),
+    });
+    const json = await res.json();
+    if (res.ok && json.id) {
+      currentResumeId = json.id;
+      loadMyResumes();
+    }
+  } catch (err) {
+    // Saving to the library is best-effort — never block the main flow.
+    console.warn("Could not save resume to library:", err.message);
+  }
+}
+
+async function loadMyResumes() {
+  if (!savedListEl) return;
+  try {
+    const res = await authFetch("/api/resumes");
+    const json = await res.json();
+    if (!res.ok || json.error) throw new Error(json.error || "Could not load resumes.");
+    renderSavedResumes(json.resumes || []);
+  } catch (err) {
+    console.warn(err.message);
+  }
+}
+
+function renderSavedResumes(list) {
+  if (!savedListEl) return;
+  savedListEl.innerHTML = "";
+  if (savedCountEl) savedCountEl.textContent = list.length ? `(${list.length})` : "";
+  if (!list.length) {
+    if (savedEmptyEl) savedEmptyEl.style.display = "";
+    return;
+  }
+  if (savedEmptyEl) savedEmptyEl.style.display = "none";
+
+  list.forEach((r) => {
+    const card = document.createElement("div");
+    card.className = "saved-card";
+    if (r.id === currentResumeId) card.classList.add("active");
+
+    const info = document.createElement("div");
+    info.className = "saved-info";
+    const titleLine = [r.title, r.company].filter(Boolean).join(" · ") || r.name || "Untitled resume";
+    const scoreTxt = (typeof r.score === "number") ? ` · ATS ${r.score}%` : "";
+    info.innerHTML =
+      `<div class="saved-title">${esc(titleLine)}</div>` +
+      `<div class="saved-meta">${esc(formatSavedDate(r.created_at))}${esc(scoreTxt)}</div>`;
+    card.appendChild(info);
+
+    const actions = document.createElement("div");
+    actions.className = "saved-actions";
+
+    const openBtn = document.createElement("button");
+    openBtn.className = "btn btn-secondary btn-sm";
+    openBtn.textContent = "Open";
+    openBtn.addEventListener("click", () => openSavedResume(r.id));
+    actions.appendChild(openBtn);
+
+    const delBtn = document.createElement("button");
+    delBtn.className = "saved-delete-btn";
+    delBtn.innerHTML = "&#x2715;";
+    delBtn.title = "Delete";
+    delBtn.addEventListener("click", () => deleteSavedResume(r.id));
+    actions.appendChild(delBtn);
+
+    card.appendChild(actions);
+    savedListEl.appendChild(card);
+  });
+}
+
+async function openSavedResume(id) {
+  try {
+    const res = await authFetch("/api/resumes/" + encodeURIComponent(id));
+    const json = await res.json();
+    if (!res.ok || json.error) throw new Error(json.error || "Could not open resume.");
+    const rec = json.resume || {};
+    tailoredData = rec.data || null;
+    savedJDText = rec.jd || "";
+    lastAtsReport = rec.ats || null;
+    currentResumeId = id;
+    if (!tailoredData) throw new Error("This saved resume has no data.");
+
+    saveToStorage(STORAGE_KEYS.tailoredData, tailoredData);
+    saveToStorage(STORAGE_KEYS.savedJD, savedJDText);
+    saveToStorage(STORAGE_KEYS.ats, lastAtsReport);
+
+    renderResults(tailoredData);
+    renderAtsPanel(lastAtsReport);
+    resultsSection.classList.add("active");
+    loadMyResumes();  // refresh active highlight
+    resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+async function deleteSavedResume(id) {
+  if (!confirm("Delete this saved resume? This cannot be undone.")) return;
+  try {
+    const res = await authFetch("/api/resumes/" + encodeURIComponent(id), { method: "DELETE" });
+    const json = await res.json();
+    if (!res.ok || json.error) throw new Error(json.error || "Could not delete resume.");
+    if (currentResumeId === id) currentResumeId = null;
+    loadMyResumes();
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+function formatSavedDate(iso) {
+  if (!iso) return "";
+  try {
+    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  } catch { return iso; }
+}
+
+const savedRefreshBtn = document.getElementById("saved-refresh-btn");
+if (savedRefreshBtn) savedRefreshBtn.addEventListener("click", loadMyResumes);
+
 // ── Restore saved state ──
 function migrateOldKeys() {
   // Migrate from the old single-key schema to the per-provider map.
@@ -1673,6 +1864,9 @@ function restoreState() {
 
   // Render tracker
   renderTracker();
+
+  // Load this user's private resume library from the server.
+  loadMyResumes();
 }
 
 restoreState();

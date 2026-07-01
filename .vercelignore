@@ -13,3 +13,4 @@ _test_*.pdf
 *.md
 !README.md
 .vercel/
+.data/

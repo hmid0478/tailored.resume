@@ -14,8 +14,17 @@ import requests
 from flask import Flask, render_template, request, jsonify, send_file
 from fpdf import FPDF
 
+from auth import (
+    ADMIN_EMAIL, ADMIN_PASSWORD,
+    current_identity, hash_password, make_token, require_admin, require_user,
+    verify_password,
+)
+from store import get_store
+
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024  # 10 MB max upload
+
+STORE = get_store()
 
 
 # ─────────────────────────────────────────────
@@ -2627,7 +2636,183 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/login")
+def login_page():
+    return render_template("login.html")
+
+
+@app.route("/admin")
+def admin_page():
+    return render_template("admin.html")
+
+
+# ─────────────────────────────────────────────
+# Auth routes
+# ─────────────────────────────────────────────
+
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    """User login. Returns a signed bearer token on success."""
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+    if not email or not password:
+        return jsonify({"error": "Email and password are required."}), 400
+    try:
+        user = STORE.get_user(email)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"Login temporarily unavailable: {e}"}), 500
+    if not user or not verify_password(password, user.get("password_hash", "")):
+        return jsonify({"error": "Invalid email or password."}), 401
+    token = make_token(email, "user")
+    return jsonify({"success": True, "token": token, "email": email})
+
+
+@app.route("/api/me", methods=["GET"])
+@require_user
+def api_me():
+    ident = request.identity
+    return jsonify({"success": True, "email": ident.get("email"), "role": ident.get("role")})
+
+
+@app.route("/api/admin/login", methods=["POST"])
+def api_admin_login():
+    """Admin login against the fixed admin credentials."""
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+    if email != ADMIN_EMAIL or password != ADMIN_PASSWORD:
+        return jsonify({"error": "Invalid admin credentials."}), 401
+    token = make_token(ADMIN_EMAIL, "admin")
+    return jsonify({"success": True, "token": token, "email": ADMIN_EMAIL})
+
+
+@app.route("/api/admin/users", methods=["GET"])
+@require_admin
+def api_admin_list_users():
+    try:
+        return jsonify({"success": True, "users": STORE.list_users()})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"Could not list users: {e}"}), 500
+
+
+@app.route("/api/admin/users", methods=["POST"])
+@require_admin
+def api_admin_create_user():
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+    if not email or "@" not in email:
+        return jsonify({"error": "A valid email is required."}), 400
+    if len(password) < 6:
+        return jsonify({"error": "Password must be at least 6 characters."}), 400
+    if email == ADMIN_EMAIL:
+        return jsonify({"error": "That email is reserved for the admin account."}), 400
+    try:
+        STORE.create_user(email, hash_password(password))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 409
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"Could not create user: {e}"}), 500
+    return jsonify({"success": True, "email": email})
+
+
+@app.route("/api/admin/users/<path:email>", methods=["DELETE"])
+@require_admin
+def api_admin_delete_user(email):
+    email = (email or "").strip().lower()
+    try:
+        existed = STORE.delete_user(email)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"Could not delete user: {e}"}), 500
+    if not existed:
+        return jsonify({"error": "User not found."}), 404
+    return jsonify({"success": True, "email": email})
+
+
+# ─────────────────────────────────────────────
+# Per-user saved resumes
+# ─────────────────────────────────────────────
+
+@app.route("/api/resumes", methods=["GET"])
+@require_user
+def api_list_resumes():
+    email = request.identity.get("email")
+    try:
+        # List view is lightweight metadata only; full data fetched on demand.
+        resumes = STORE.list_resumes(email)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"Could not load resumes: {e}"}), 500
+    summaries = [{
+        "id": r.get("id"),
+        "created_at": r.get("created_at"),
+        "name": r.get("name", ""),
+        "title": r.get("title", ""),
+        "company": r.get("company", ""),
+        "score": (r.get("ats") or {}).get("score") if isinstance(r.get("ats"), dict) else None,
+    } for r in resumes]
+    return jsonify({"success": True, "resumes": summaries})
+
+
+@app.route("/api/resumes", methods=["POST"])
+@require_user
+def api_save_resume():
+    email = request.identity.get("email")
+    data = request.get_json(silent=True) or {}
+    resume_data = data.get("data")
+    if not isinstance(resume_data, dict):
+        return jsonify({"error": "Missing resume data."}), 400
+    record = {
+        "name": (data.get("name") or resume_data.get("name") or "").strip(),
+        "title": (data.get("title") or resume_data.get("title") or "").strip(),
+        "company": (data.get("company") or "").strip(),
+        "jd": data.get("jd") or "",
+        "data": resume_data,
+        "ats": data.get("ats") or None,
+    }
+    try:
+        saved = STORE.add_resume(email, record)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"Could not save resume: {e}"}), 500
+    return jsonify({"success": True, "id": saved["id"], "created_at": saved["created_at"]})
+
+
+@app.route("/api/resumes/<resume_id>", methods=["GET"])
+@require_user
+def api_get_resume(resume_id):
+    email = request.identity.get("email")
+    try:
+        record = STORE.get_resume(email, resume_id)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"Could not load resume: {e}"}), 500
+    if not record:
+        return jsonify({"error": "Resume not found."}), 404
+    return jsonify({"success": True, "resume": record})
+
+
+@app.route("/api/resumes/<resume_id>", methods=["DELETE"])
+@require_user
+def api_delete_resume(resume_id):
+    email = request.identity.get("email")
+    try:
+        existed = STORE.delete_resume(email, resume_id)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"Could not delete resume: {e}"}), 500
+    if not existed:
+        return jsonify({"error": "Resume not found."}), 404
+    return jsonify({"success": True})
+
+
 @app.route("/api/scrape-jd", methods=["POST"])
+@require_user
 def api_scrape_jd():
     """Scrape a job description from a URL using Apify website-content-crawler."""
     try:
@@ -2716,6 +2901,7 @@ def api_scrape_jd():
 
 
 @app.route("/api/jd-keywords", methods=["POST"])
+@require_user
 def api_jd_keywords():
     """Preview the keywords the ATS scorer will look for, before the user spends tokens
     on a full tailoring run.
@@ -2756,6 +2942,7 @@ def api_jd_keywords():
 
 
 @app.route("/api/tailor", methods=["POST"])
+@require_user
 def api_tailor():
     try:
         provider = request.form.get("provider", "anthropic").strip().lower()
@@ -2845,6 +3032,7 @@ def api_tailor():
 
 
 @app.route("/api/answer-questions", methods=["POST"])
+@require_user
 def api_answer_questions():
     """Answer job application questions using JD + resume context."""
     try:
@@ -2987,6 +3175,7 @@ Return ONLY a JSON array, no markdown code fences, no extra text. Example format
 
 
 @app.route("/api/download-pdf", methods=["POST"])
+@require_user
 def api_download_pdf():
     try:
         data = request.get_json()

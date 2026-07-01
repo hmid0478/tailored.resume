@@ -1,0 +1,264 @@
+/* ─────────────────────────────────────────────
+   Auth pages (login + admin) — standalone styling
+   Matches the main app's dark theme.
+   ───────────────────────────────────────────── */
+:root {
+  --bg: #0f1117;
+  --surface: #1a1d27;
+  --surface-2: #222634;
+  --border: #2e3345;
+  --text: #e4e6f0;
+  --text-muted: #8b8fa3;
+  --accent: #6c63ff;
+  --accent-hover: #7b73ff;
+  --accent-glow: rgba(108, 99, 255, 0.15);
+  --success: #34d399;
+  --error: #f87171;
+  --radius: 12px;
+  --radius-sm: 8px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 20px;
+}
+
+/* Background glow */
+body::before {
+  content: "";
+  position: fixed;
+  top: -20%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle, var(--accent-glow), transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.auth-wrap {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 420px;
+  margin: auto 0;
+}
+
+.auth-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 36px 32px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+}
+
+.auth-logo {
+  text-align: center;
+  margin-bottom: 8px;
+}
+.auth-logo h1 {
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.auth-logo .accent { color: var(--accent); }
+
+.auth-sub {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin-bottom: 28px;
+}
+
+.auth-badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent);
+  background: var(--accent-glow);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 12px;
+  margin: 0 auto 18px;
+  display: block;
+  width: fit-content;
+}
+
+.form-group { margin-bottom: 18px; }
+.form-group label {
+  display: block;
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-bottom: 7px;
+}
+.form-group input {
+  width: 100%;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.95rem;
+  padding: 12px 14px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  font-family: inherit;
+}
+.form-group input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.btn {
+  width: 100%;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 12px 18px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, transform 0.05s;
+}
+.btn:active { transform: translateY(1px); }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+.btn-ghost {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  width: auto;
+  padding: 8px 14px;
+  font-size: 0.85rem;
+}
+.btn-ghost:hover { color: var(--text); border-color: var(--accent); }
+.btn-danger {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--error);
+  width: auto;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+}
+.btn-danger:hover { background: rgba(248, 113, 113, 0.1); }
+
+.auth-msg {
+  font-size: 0.85rem;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 16px;
+  display: none;
+}
+.auth-msg.error {
+  display: block;
+  color: var(--error);
+  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+}
+.auth-msg.success {
+  display: block;
+  color: var(--success);
+  background: rgba(52, 211, 153, 0.1);
+  border: 1px solid rgba(52, 211, 153, 0.3);
+}
+
+.auth-foot {
+  text-align: center;
+  margin-top: 22px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+.auth-foot a { color: var(--accent); text-decoration: none; }
+.auth-foot a:hover { text-decoration: underline; }
+
+/* ── Admin dashboard ── */
+.admin-shell {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 860px;
+}
+.admin-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+.admin-topbar h1 { font-size: 1.4rem; font-weight: 700; }
+.admin-topbar .who { color: var(--text-muted); font-size: 0.85rem; }
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 20px;
+}
+@media (max-width: 720px) {
+  .admin-grid { grid-template-columns: 1fr; }
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 22px;
+}
+.panel h2 {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+.panel .hint { color: var(--text-muted); font-size: 0.8rem; margin-bottom: 16px; }
+
+.user-table { width: 100%; border-collapse: collapse; }
+.user-table th {
+  text-align: left;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.user-table td {
+  padding: 10px;
+  font-size: 0.88rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.user-table tr:last-child td { border-bottom: none; }
+.user-email { font-weight: 500; }
+.user-date { color: var(--text-muted); font-size: 0.78rem; }
+.users-empty { color: var(--text-muted); font-size: 0.88rem; padding: 16px 4px; }
+
+.count-pill {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 10px;
+  margin-left: 8px;
+}
+
+.spinner {
+  width: 18px; height: 18px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  display: inline-block;
+  vertical-align: middle;
+}
+@keyframes spin { to { transform: rotate(360deg); } }

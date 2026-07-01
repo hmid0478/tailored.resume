@@ -1628,3 +1628,87 @@ del.diff-removed { background: rgba(239,68,68,0.25);  color: #fca5a5; text-decor
   .dl-field-input { width: 45%; flex: 1 1 45%; }
   .download-with-fields .btn-success { width: 100%; border-left: none; border-top: 1px solid rgba(255,255,255,0.10); border-radius: 0 0 10px 10px; }
 }
+
+/* ─────────────────────────────────────────────
+   Signed-in user bar
+   ───────────────────────────────────────────── */
+.user-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-bottom: 10px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+.user-bar-who strong { color: var(--text); font-weight: 600; }
+.user-bar-logout {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  padding: 5px 12px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: color 0.15s, border-color 0.15s;
+}
+.user-bar-logout:hover { color: var(--text); border-color: var(--accent); }
+
+/* ─────────────────────────────────────────────
+   My Resumes (per-user library)
+   ───────────────────────────────────────────── */
+.saved-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 22px 24px;
+  margin-top: 24px;
+}
+.saved-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.saved-header h2 { font-size: 1.1rem; font-weight: 600; }
+.saved-count { color: var(--text-muted); font-weight: 400; font-size: 0.9rem; margin-left: 4px; }
+.saved-list { display: flex; flex-direction: column; gap: 10px; }
+.saved-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px;
+  transition: border-color 0.15s;
+}
+.saved-card:hover { border-color: var(--accent); }
+.saved-card.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+.saved-info { min-width: 0; }
+.saved-title {
+  font-weight: 600;
+  font-size: 0.92rem;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.saved-meta { font-size: 0.78rem; color: var(--text-muted); margin-top: 2px; }
+.saved-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.saved-delete-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  width: 30px;
+  height: 30px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: color 0.15s, border-color 0.15s;
+}
+.saved-delete-btn:hover { color: var(--error); border-color: var(--error); }
+.saved-empty { color: var(--text-muted); font-size: 0.88rem; padding: 8px 2px; }

@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin · Resume Tailor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/auth.css" />
+</head>
+<body>
+
+  <!-- ── Admin login view ── -->
+  <div class="auth-wrap" id="admin-login-view" style="display:none;">
+    <div class="auth-card">
+      <span class="auth-badge">Admin</span>
+      <div class="auth-logo"><h1>Resume <span class="accent">Tailor</span></h1></div>
+      <p class="auth-sub">Administrator sign in</p>
+
+      <div class="auth-msg" id="admin-login-msg"></div>
+
+      <form id="admin-login-form">
+        <div class="form-group">
+          <label for="admin-email">Admin email</label>
+          <input type="email" id="admin-email" autocomplete="username" placeholder="admin@example.com" required />
+        </div>
+        <div class="form-group">
+          <label for="admin-password">Password</label>
+          <input type="password" id="admin-password" autocomplete="current-password" placeholder="Admin password" required />
+        </div>
+        <button type="submit" class="btn btn-primary" id="admin-login-btn">Sign in as admin</button>
+      </form>
+
+      <div class="auth-foot"><a href="/login">← Back to user login</a></div>
+    </div>
+  </div>
+
+  <!-- ── Admin dashboard view ── -->
+  <div class="admin-shell" id="admin-dash-view" style="display:none;">
+    <div class="admin-topbar">
+      <div>
+        <h1>Admin Portal</h1>
+        <span class="who" id="admin-who"></span>
+      </div>
+      <button class="btn btn-ghost" id="admin-logout-btn">Log out</button>
+    </div>
+
+    <div class="admin-grid">
+      <!-- Create user -->
+      <div class="panel">
+        <h2>Create a user</h2>
+        <p class="hint">The user signs in with this email &amp; password. Their resumes are private to them.</p>
+        <div class="auth-msg" id="create-msg"></div>
+        <form id="create-user-form">
+          <div class="form-group">
+            <label for="new-email">User email</label>
+            <input type="email" id="new-email" placeholder="user@example.com" required />
+          </div>
+          <div class="form-group">
+            <label for="new-password">Password <span style="opacity:.6">(min 6 chars)</span></label>
+            <input type="text" id="new-password" placeholder="Set a password" required />
+          </div>
+          <button type="submit" class="btn btn-primary" id="create-btn">Create user</button>
+        </form>
+      </div>
+
+      <!-- User list -->
+      <div class="panel">
+        <h2>Users <span class="count-pill" id="user-count">0</span></h2>
+        <div id="users-container">
+          <div class="users-empty">Loading…</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/admin.js"></script>
+</body>
+</html>

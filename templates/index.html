@@ -22,6 +22,12 @@
   <div class="error-toast" id="error-toast"></div>
 
   <div class="app-container">
+    <!-- Signed-in user bar -->
+    <div class="user-bar" id="user-bar">
+      <span class="user-bar-who">Signed in as <strong id="user-bar-email">…</strong></span>
+      <button type="button" class="user-bar-logout" id="logout-btn">Log out</button>
+    </div>
+
     <!-- Quick-copy LinkedIn -->
     <div class="linkedin-bar" id="linkedin-bar">
       <span class="linkedin-icon">in</span>
@@ -264,6 +270,18 @@ Describe a challenging project you worked on..."></textarea>
         </div>
       </div>
     </div>
+    <!-- ═══════════════════════════════════════════
+         MY SAVED RESUMES (per-user, server-side)
+         ═══════════════════════════════════════════ -->
+    <div class="saved-section" id="saved-section">
+      <div class="saved-header">
+        <h2>My Resumes <span class="saved-count" id="saved-count"></span></h2>
+        <button type="button" class="btn btn-tracker" id="saved-refresh-btn">Refresh</button>
+      </div>
+      <div class="saved-list" id="saved-list"></div>
+      <div class="saved-empty" id="saved-empty">Your tailored resumes are saved here privately. Tailor a resume to see it appear.</div>
+    </div>
+
     <!-- ═══════════════════════════════════════════
          JOB APPLICATION TRACKER
          ═══════════════════════════════════════════ -->
