@@ -16,13 +16,24 @@ if (!AUTH_TOKEN) {
 const USER_PREFIX = "u:" + AUTH_EMAIL + ":";
 
 // Fetch wrapper that attaches the bearer token and handles session expiry.
+// IMPORTANT: only a *session* 401 (tagged `auth: "required"` by the backend) should
+// log the user out. A 401 from an AI provider (invalid API key) must NOT — otherwise
+// a bad key would kick the user to the login page instead of showing the real error.
 async function authFetch(url, opts = {}) {
   const headers = Object.assign({}, opts.headers, { Authorization: "Bearer " + AUTH_TOKEN });
   const res = await fetch(url, Object.assign({}, opts, { headers }));
   if (res.status === 401) {
-    localStorage.removeItem("rt_auth_token");
-    window.location.replace("/login");
-    throw new Error("Your session expired. Please log in again.");
+    let isSessionExpiry = false;
+    try {
+      const data = await res.clone().json();
+      isSessionExpiry = data && data.auth === "required";
+    } catch { /* non-JSON 401 — treat as a normal error, not a logout */ }
+    if (isSessionExpiry) {
+      localStorage.removeItem("rt_auth_token");
+      localStorage.removeItem("rt_auth_email");
+      window.location.replace("/login");
+      throw new Error("Your session expired. Please log in again.");
+    }
   }
   return res;
 }
