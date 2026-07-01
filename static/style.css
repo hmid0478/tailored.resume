@@ -1712,3 +1712,11 @@ del.diff-removed { background: rgba(239,68,68,0.25);  color: #fca5a5; text-decor
 }
 .saved-delete-btn:hover { color: var(--error); border-color: var(--error); }
 .saved-empty { color: var(--text-muted); font-size: 0.88rem; padding: 8px 2px; }
+
+/* Stacked toggles (Keyword-swap + Fast mode) in the action row */
+.toggle-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}

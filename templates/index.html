@@ -150,11 +150,18 @@
 
       <!-- Submit -->
       <div class="action-row">
-        <label class="fast-mode-toggle">
-          <input type="checkbox" id="fast-mode-checkbox" />
-          <span>Fast mode</span>
-          <span class="label-hint">— skip ATS auto-fix loop (3-6× faster, no score)</span>
-        </label>
+        <div class="toggle-stack">
+          <label class="fast-mode-toggle">
+            <input type="checkbox" id="preserve-mode-checkbox" />
+            <span>Keyword-swap only</span>
+            <span class="label-hint">— keep your resume's exact wording &amp; lengths; only swap technologies to match the JD (incl. old roles)</span>
+          </label>
+          <label class="fast-mode-toggle">
+            <input type="checkbox" id="fast-mode-checkbox" />
+            <span>Fast mode</span>
+            <span class="label-hint">— skip ATS auto-fix loop (3-6× faster, no score)</span>
+          </label>
+        </div>
         <button type="submit" class="btn btn-primary">Tailor My Resume</button>
       </div>
     </form>

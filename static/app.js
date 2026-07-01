@@ -55,6 +55,7 @@ const STORAGE_KEYS = {
   pdfTemplate: "rt_pdf_template",
   ats: "rt_ats_report",
   fastMode: "rt_fast_mode",
+  preserveMode: "rt_preserve_mode",
   dlCompany: "rt_dl_company",
   dlTitle: "rt_dl_title",
   jobMeta: "rt_job_meta",
@@ -452,6 +453,7 @@ form.addEventListener("submit", async (e) => {
   // Prompt is optional — the backend has a built-in default
 
   const fastMode = !!document.getElementById("fast-mode-checkbox")?.checked;
+  const preserveMode = !!document.getElementById("preserve-mode-checkbox")?.checked;
 
   const fd = new FormData();
   fd.append("provider", provider);
@@ -459,6 +461,7 @@ form.addEventListener("submit", async (e) => {
   if (model) fd.append("model", model);
   if (baseUrl) fd.append("base_url", baseUrl);
   if (fastMode) fd.append("fast_mode", "1");
+  if (preserveMode) fd.append("preserve_mode", "1");
   fd.append("jd", jd);
   fd.append("resume_file", resumeFileInput.files[0]);
 
@@ -1570,6 +1573,7 @@ function collectSettings() {
     providerModels: getProviderMap(STORAGE_KEYS.providerModels),
     providerBaseUrls: getProviderMap(STORAGE_KEYS.providerBaseUrls),
     fastMode: loadFromStorage(STORAGE_KEYS.fastMode) || "0",
+    preserveMode: loadFromStorage(STORAGE_KEYS.preserveMode) || "1",
     pdfTemplate: loadFromStorage(STORAGE_KEYS.pdfTemplate) || "",
   };
 }
@@ -1607,6 +1611,7 @@ async function pullSettingsFromServer() {
     if (s.provider && !loadFromStorage(STORAGE_KEYS.provider)) saveToStorage(STORAGE_KEYS.provider, s.provider);
     if (s.pdfTemplate && !loadFromStorage(STORAGE_KEYS.pdfTemplate)) saveToStorage(STORAGE_KEYS.pdfTemplate, s.pdfTemplate);
     if (s.fastMode != null && loadFromStorage(STORAGE_KEYS.fastMode) == null) saveToStorage(STORAGE_KEYS.fastMode, s.fastMode);
+    if (s.preserveMode != null && loadFromStorage(STORAGE_KEYS.preserveMode) == null) saveToStorage(STORAGE_KEYS.preserveMode, s.preserveMode);
   } catch (err) {
     console.warn("Could not load settings:", err.message);
   }
@@ -1802,6 +1807,16 @@ function restoreState() {
     fastBox.checked = loadFromStorage(STORAGE_KEYS.fastMode) === "1";
     fastBox.addEventListener("change", () => {
       saveToStorage(STORAGE_KEYS.fastMode, fastBox.checked ? "1" : "0");
+      pushSettingsToServer();
+    });
+  }
+
+  // Keyword-swap (preservation) mode — defaults ON unless explicitly turned off.
+  const preserveBox = document.getElementById("preserve-mode-checkbox");
+  if (preserveBox) {
+    preserveBox.checked = loadFromStorage(STORAGE_KEYS.preserveMode) !== "0";
+    preserveBox.addEventListener("change", () => {
+      saveToStorage(STORAGE_KEYS.preserveMode, preserveBox.checked ? "1" : "0");
       pushSettingsToServer();
     });
   }

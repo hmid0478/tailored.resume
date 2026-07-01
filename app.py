@@ -589,6 +589,17 @@ Apply ALL phases above to the following inputs:
 """.strip()
 
 
+# Conservative system prompt used in keyword-swap (preservation) mode. It deliberately
+# does NOT tell the model to rewrite/expand/reorder — it only aligns technology terms.
+PRESERVE_TAILORING_PROMPT = (
+    "You are a precise resume keyword-alignment tool. You do NOT rewrite resumes and you "
+    "do NOT change wording, sentence length, or structure. You return the candidate's resume "
+    "exactly as written, changing ONLY technology keywords (languages, frameworks, libraries, "
+    "tools, platforms) so they match the terminology used in the job description — in every "
+    "place they appear, including older roles. You never fabricate experience or add content."
+).strip()
+
+
 # ─────────────────────────────────────────────
 # Resume section detection
 # ─────────────────────────────────────────────
@@ -698,9 +709,13 @@ def _classify_section(name: str) -> str:
 # AI API calls (Claude + Gemini)
 # ─────────────────────────────────────────────
 
-def _build_tailor_user_msg(resume_text: str, prompt_text: str, jd_text: str, detected_sections: list[str] | None = None) -> str:
-    """Build the full prompt for resume tailoring (shared across providers)."""
-    system_msg = prompt_text.strip()
+def _build_tailor_user_msg(resume_text: str, prompt_text: str, jd_text: str, detected_sections: list[str] | None = None, preserve_mode: bool = False) -> str:
+    """Build the full prompt for resume tailoring (shared across providers).
+
+    preserve_mode=True switches to keyword-swap behavior: reproduce the resume verbatim
+    and only align technology terms to the JD, keeping every sentence's length/structure.
+    """
+    system_msg = PRESERVE_TAILORING_PROMPT if preserve_mode else prompt_text.strip()
 
     # Build dynamic section schema based on detected sections
     if not detected_sections:
@@ -737,18 +752,24 @@ def _build_tailor_user_msg(resume_text: str, prompt_text: str, jd_text: str, det
     sections_json = ",\n".join(section_examples)
     sections_list = ", ".join(detected_sections)
 
-    user_msg = f"""Here are the two inputs:
-
-=== CANDIDATE RESUME ===
-{resume_text}
-
-=== JOB DESCRIPTION ===
-{jd_text}
-
-=== INSTRUCTIONS ===
-Apply every phase from your system prompt to these inputs.
-
-CRITICAL RULES:
+    if preserve_mode:
+        rules_block = f"""CRITICAL RULES — KEYWORD-SWAP / PRESERVATION MODE (these OVERRIDE any rewrite guidance above):
+1. Reproduce the resume EXACTLY: same sections in the SAME order ([{sections_list}]), the SAME
+   number of bullets, and every sentence/bullet/paragraph kept with the SAME wording and the
+   SAME approximate length. Do NOT rewrite, expand, shorten, reorder, or add metrics.
+2. The ONLY change allowed is swapping TECHNOLOGY KEYWORDS (languages, frameworks, libraries,
+   tools, platforms) to the JOB DESCRIPTION's terminology, in EVERY place they appear — the
+   Summary, the Skills section, and ALL work experiences INCLUDING the oldest ones.
+   Examples: "AngularJS" -> "Angular", "JS" -> "JavaScript", "K8s" -> "Kubernetes",
+   "Postgres" -> "PostgreSQL", "node" -> "Node.js", "message-based" -> "event-driven".
+3. Only swap when the resume's term and the JD's term refer to the same or a directly adjacent
+   technology. Do NOT introduce a technology that has no corresponding term already in the resume.
+   A swapped keyword must keep the sentence essentially the same length.
+4. Do NOT change the candidate's name, title, or contact.
+5. JOB IDENTITY: extract the hiring COMPANY name and the JOB TITLE from the JOB DESCRIPTION
+   (not the resume) into "detected_company" and "detected_job_title" (empty string if not stated)."""
+    else:
+        rules_block = f"""CRITICAL RULES:
 1. Do NOT change the candidate's title. Keep the EXACT title from the original resume.
 2. The output MUST have the SAME sections as the original resume, in the SAME order. The detected sections are: [{sections_list}].
 3. Do NOT drop, merge, or add sections. Mirror the original resume's structure exactly.
@@ -763,7 +784,20 @@ CRITICAL RULES:
    technology the candidate has no plausible experience with.
 5. JOB IDENTITY: extract the hiring COMPANY name and the JOB TITLE from the JOB
    DESCRIPTION (not the resume). Put them in "detected_company" and "detected_job_title".
-   If one is not stated, use an empty string for it.
+   If one is not stated, use an empty string for it."""
+
+    user_msg = f"""Here are the two inputs:
+
+=== CANDIDATE RESUME ===
+{resume_text}
+
+=== JOB DESCRIPTION ===
+{jd_text}
+
+=== INSTRUCTIONS ===
+{"Follow the PRESERVATION rules below to the letter." if preserve_mode else "Apply every phase from your system prompt to these inputs."}
+
+{rules_block}
 
 IMPORTANT: Return ONLY the tailored resume as a JSON object with this exact structure (no change log, no interview prep — just the resume):
 
@@ -1175,8 +1209,8 @@ def _section_count(resume: dict) -> int:
 
 
 def _do_tailor_call(api_key, resume_text, prompt_text, jd_text, provider,
-                    detected_sections, model, base_url, extra_instruction=""):
-    prompt = _build_tailor_user_msg(resume_text, prompt_text, jd_text, detected_sections)
+                    detected_sections, model, base_url, extra_instruction="", preserve_mode=False):
+    prompt = _build_tailor_user_msg(resume_text, prompt_text, jd_text, detected_sections, preserve_mode=preserve_mode)
     if extra_instruction:
         prompt += "\n\n" + extra_instruction
     raw = call_ai(provider, api_key, prompt, max_tokens=16000, model=model, base_url=base_url, json_mode=True)
@@ -1207,6 +1241,7 @@ def tailor_resume(
     detected_sections: list[str] | None = None,
     model: str | None = None,
     base_url: str | None = None,
+    preserve_mode: bool = False,
 ) -> dict:
     """Call AI to tailor the resume. Returns structured JSON.
 
@@ -1214,7 +1249,7 @@ def tailor_resume(
     once with an explicit instruction listing each missing section by name.
     """
     data = _do_tailor_call(api_key, resume_text, prompt_text, jd_text, provider,
-                           detected_sections, model, base_url)
+                           detected_sections, model, base_url, preserve_mode=preserve_mode)
 
     # If we know what sections the original had, verify the AI kept them.
     if detected_sections:
@@ -1233,7 +1268,8 @@ def tailor_resume(
             )
             try:
                 retry = _do_tailor_call(api_key, resume_text, prompt_text, jd_text, provider,
-                                        detected_sections, model, base_url, extra_instruction=extra)
+                                        detected_sections, model, base_url, extra_instruction=extra,
+                                        preserve_mode=preserve_mode)
                 # Use the retry only if it has at least as many sections AND restores the missing ones.
                 retry_got = set(_section_headings(retry))
                 if (expected - retry_got) == set() or len(retry_got) > len(got):
@@ -1324,15 +1360,48 @@ def _build_ats_improve_prompt(
     original_resume_text: str,
     target: int,
     aggressive: bool,
+    preserve_mode: bool = False,
 ) -> str:
     """Prompt that rewrites the tailored resume to push the ATS score above the target.
 
     aggressive=True triggers a "diagnose mistakes first" mode used when the score is
     below the floor (default 80). The model is given a checklist of common ATS failure
     modes and instructed to apply ALL applicable fixes in a single revision.
+
+    preserve_mode=True constrains the pass to keyword swaps only (no length/structure changes).
     """
     missing = ", ".join(ats_report.get("missing_keywords") or []) or "(none listed)"
     matched = ", ".join((ats_report.get("matched_keywords") or [])[:30]) or "(none yet)"
+
+    if preserve_mode:
+        preserve_system = f"""You are adjusting a resume in KEYWORD-SWAP / PRESERVATION MODE to raise its ATS keyword coverage to {target}% or higher.
+
+STRICT CONSTRAINTS:
+- Keep EVERY sentence, bullet, and paragraph with the SAME wording, structure, and length.
+- The ONLY change allowed is swapping an existing technology term for the JOB DESCRIPTION's
+  equivalent term, in ANY section including the oldest roles (e.g. "AngularJS" -> "Angular",
+  "K8s" -> "Kubernetes", "Postgres" -> "PostgreSQL", "message-based" -> "event-driven").
+- Do NOT add or remove sentences/bullets, do NOT add metrics, do NOT reorder, do NOT lengthen
+  or shorten anything. Do NOT invent technologies with no corresponding term already in the resume.
+- Keep the same JSON structure and the candidate's name, title, and contact unchanged.
+
+Return ONLY the revised resume JSON in the same schema, no prose, no fences."""
+        user = f"""=== ORIGINAL RESUME (source of truth — do not exceed what's here) ===
+{original_resume_text}
+
+=== CURRENT TAILORED RESUME (JSON) ===
+{json.dumps(resume_json, ensure_ascii=False)}
+
+=== JOB DESCRIPTION ===
+{jd_text}
+
+=== ATS REPORT ===
+Current score: {ats_report.get('score')}  (target {target}%)
+Already matched (do not lose these): {matched}
+Missing keywords — surface these ONLY by swapping an existing resume term that means the same thing: {missing}
+
+Apply keyword swaps now. Return ONLY the revised JSON object."""
+        return f"{preserve_system}\n\n{user}"
 
     base_constraints = f"""You are revising a tailored resume to raise its ATS keyword-coverage score to {target}% or higher.
 
@@ -1434,13 +1503,16 @@ def improve_resume_for_ats(
     model: str | None = None,
     base_url: str | None = None,
     aggressive: bool = False,
+    preserve_mode: bool = False,
 ) -> dict:
     """Single rewrite pass to incorporate missing keywords without fabrication.
 
     aggressive=True activates the diagnose-then-fix prompt used when score < ATS_FLOOR_SCORE.
+    preserve_mode=True constrains the pass to keyword swaps only.
     """
     prompt = _build_ats_improve_prompt(
         resume_json, jd_text, ats_report, original_resume_text, target, aggressive,
+        preserve_mode=preserve_mode,
     )
     raw = call_ai(provider, api_key, prompt, max_tokens=16000, model=model, base_url=base_url, json_mode=True)
     raw = _strip_code_fences(raw)
@@ -1667,6 +1739,7 @@ def tailor_with_ats_target(
     base_url: str | None,
     target: int = ATS_TARGET_SCORE,
     fast_mode: bool = False,
+    preserve_mode: bool = False,
 ) -> tuple[dict, dict | None, dict]:
     """Tailor → score → (if low) improve → re-score. Returns (resume_json, ats_report_or_None, job_meta).
 
@@ -1682,7 +1755,7 @@ def tailor_with_ats_target(
     """
     result = tailor_resume(
         api_key, resume_text, prompt_text, jd_text, provider, detected_sections,
-        model=model, base_url=base_url,
+        model=model, base_url=base_url, preserve_mode=preserve_mode,
     )
     job_meta = _pop_job_meta(result)
 
@@ -1712,7 +1785,7 @@ def tailor_with_ats_target(
             # Ask the model to surface the concrete missing keywords into the resume...
             improved = improve_resume_for_ats(
                 provider, api_key, best_result, jd_text, best_ats, resume_text, target,
-                model=model, base_url=base_url, aggressive=aggressive,
+                model=model, base_url=base_url, aggressive=aggressive, preserve_mode=preserve_mode,
             )
             passes += 1
             # ...then re-score deterministically and only keep it if it's both safe and better.
@@ -3135,6 +3208,7 @@ def api_tailor():
         model = request.form.get("model", "").strip() or None
         base_url = request.form.get("base_url", "").strip() or None
         fast_mode = request.form.get("fast_mode", "").strip().lower() in ("1", "true", "yes", "on")
+        preserve_mode = request.form.get("preserve_mode", "").strip().lower() in ("1", "true", "yes", "on")
         # Local providers (Ollama, openai_compatible pointing at localhost) often don't need a key.
         is_local = provider == "ollama" or (provider == "openai_compatible" and base_url and "localhost" in base_url)
         if not api_key and not is_local:
@@ -3192,6 +3266,7 @@ def api_tailor():
         result, ats, job_meta = tailor_with_ats_target(
             api_key, resume_text, prompt_text, jd_text, provider, detected_sections,
             model=model, base_url=base_url, target=ATS_TARGET_SCORE, fast_mode=fast_mode,
+            preserve_mode=preserve_mode,
         )
 
         # Force-override personal info with original values (never let AI change these)
