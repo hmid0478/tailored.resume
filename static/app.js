@@ -42,7 +42,6 @@ let tailoredData = null;
 let currentResumeId = null;  // server id of the resume currently in the preview
 let savedJDText = "";  // Preserved JD context for Q&A
 let scrapedMetadata = null;  // (legacy) metadata holder — kept null now that scraping is gone
-let lastAtsReport = null;     // Most recent ATS score report
 let lastJobMeta = { company: "", position: "" };  // Company/title extracted from the JD
 
 // ── LocalStorage persistence ──
@@ -64,8 +63,6 @@ const STORAGE_KEYS = {
   promptMode: "rt_prompt_mode",  // "upload" or "paste"
   trackerEntries: "rt_tracker_entries",
   pdfTemplate: "rt_pdf_template",
-  ats: "rt_ats_report",
-  fastMode: "rt_fast_mode",
   preserveMode: "rt_preserve_mode",
   dlCompany: "rt_dl_company",
   dlTitle: "rt_dl_title",
@@ -390,7 +387,7 @@ const loadingSteps = [
   "Analyzing the job description...",
   "Extracting hard requirements & hidden keywords...",
   "Mapping skills to JD priorities...",
-  "Rewriting summary for ATS optimization...",
+  "Rewriting summary to match the role...",
   "Reframing experience bullets with power verbs...",
   "Running keyword density checks...",
   "Generating change log & interview prep...",
@@ -463,7 +460,6 @@ form.addEventListener("submit", async (e) => {
 
   // Prompt is optional — the backend has a built-in default
 
-  const fastMode = !!document.getElementById("fast-mode-checkbox")?.checked;
   const preserveMode = !!document.getElementById("preserve-mode-checkbox")?.checked;
 
   const fd = new FormData();
@@ -471,7 +467,6 @@ form.addEventListener("submit", async (e) => {
   fd.append("api_key", apiKey);
   if (model) fd.append("model", model);
   if (baseUrl) fd.append("base_url", baseUrl);
-  if (fastMode) fd.append("fast_mode", "1");
   if (preserveMode) fd.append("preserve_mode", "1");
   fd.append("jd", jd);
   fd.append("resume_file", resumeFileInput.files[0]);
@@ -502,15 +497,12 @@ form.addEventListener("submit", async (e) => {
 
     tailoredData = json.data;
     savedJDText = jd;
-    lastAtsReport = json.ats || null;
     lastJobMeta = normalizeJobMeta(json.job_meta);
     saveToStorage(STORAGE_KEYS.tailoredData, tailoredData);
     saveToStorage(STORAGE_KEYS.savedJD, savedJDText);
-    saveToStorage(STORAGE_KEYS.ats, lastAtsReport);
     saveToStorage(STORAGE_KEYS.jobMeta, lastJobMeta);
     applyJobMetaToFilenameFields();
     renderResults(tailoredData);
-    renderAtsPanel(lastAtsReport);
     resultsSection.classList.add("active");
 
     // Persist to the user's private, server-side resume library.
@@ -537,369 +529,6 @@ form.addEventListener("submit", async (e) => {
     stopLoadingSteps();
   }
 });
-
-// ── Auto-fix diff (structured comparison of pre- vs post-remediation resume) ──
-function _wordDiff(beforeStr, afterStr) {
-  const a = (beforeStr || "").split(/(\s+)/);
-  const b = (afterStr || "").split(/(\s+)/);
-  // Bail out for very long strings — LCS is O(n*m).
-  if (a.length * b.length > 60000) {
-    return { before: [{ text: beforeStr || "", type: "removed" }],
-             after:  [{ text: afterStr  || "", type: "added"   }] };
-  }
-  const dp = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
-  for (let i = 1; i <= a.length; i++) {
-    for (let j = 1; j <= b.length; j++) {
-      dp[i][j] = a[i - 1] === b[j - 1] ? dp[i - 1][j - 1] + 1
-               : Math.max(dp[i - 1][j], dp[i][j - 1]);
-    }
-  }
-  const before = [], after = [];
-  let i = a.length, j = b.length;
-  while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
-      before.unshift({ text: a[i - 1], type: "same" });
-      after.unshift({ text: b[j - 1], type: "same" });
-      i--; j--;
-    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-      after.unshift({ text: b[j - 1], type: "added" });
-      j--;
-    } else {
-      before.unshift({ text: a[i - 1], type: "removed" });
-      i--;
-    }
-  }
-  return { before, after };
-}
-
-function _renderDiffSide(parts, side) {
-  const span = document.createElement("div");
-  span.className = `diff-side diff-${side}`;
-  parts.forEach((p) => {
-    if (p.type === "same") {
-      span.appendChild(document.createTextNode(p.text));
-    } else {
-      const tag = document.createElement(p.type === "added" ? "ins" : "del");
-      tag.className = `diff-${p.type}`;
-      tag.textContent = p.text;
-      span.appendChild(tag);
-    }
-  });
-  return span;
-}
-
-function _diffChange(path, before, after) {
-  return { path, before: before == null ? "" : String(before), after: after == null ? "" : String(after) };
-}
-
-function diffResume(before, after) {
-  const changes = [];
-  if ((before.title || "") !== (after.title || ""))
-    changes.push(_diffChange("Title", before.title, after.title));
-  if ((before.contact || "") !== (after.contact || ""))
-    changes.push(_diffChange("Contact", before.contact, after.contact));
-
-  const bSecs = before.sections || [];
-  const aSecs = after.sections  || [];
-  const m = Math.min(bSecs.length, aSecs.length);
-  for (let i = 0; i < m; i++) {
-    const bs = bSecs[i], as = aSecs[i];
-    const heading = as.heading || bs.heading || `Section ${i + 1}`;
-
-    if (bs.heading && as.heading && bs.heading !== as.heading) {
-      changes.push(_diffChange(`${bs.heading} → renamed`, bs.heading, as.heading));
-    }
-
-    if (bs.type === "text" || as.type === "text") {
-      if ((bs.content || "") !== (as.content || "")) {
-        changes.push(_diffChange(heading, bs.content, as.content));
-      }
-    } else if (bs.type === "skills" || as.type === "skills") {
-      const bIt = bs.items || [], aIt = as.items || [];
-      const km = Math.min(bIt.length, aIt.length);
-      for (let j = 0; j < km; j++) {
-        const bc = bIt[j] || {}, ac = aIt[j] || {};
-        const cat = ac.category || bc.category || "category";
-        if ((bc.category || "") !== (ac.category || "")) {
-          changes.push(_diffChange(`${heading} > category`, bc.category, ac.category));
-        }
-        if ((bc.items || "") !== (ac.items || "")) {
-          changes.push(_diffChange(`${heading} > ${cat}`, bc.items, ac.items));
-        }
-      }
-      for (let j = km; j < aIt.length; j++) {
-        changes.push(_diffChange(`${heading} > +${aIt[j].category || "new"}`, "", aIt[j].items || ""));
-      }
-      for (let j = km; j < bIt.length; j++) {
-        changes.push(_diffChange(`${heading} > −${bIt[j].category || "removed"}`, bIt[j].items || "", ""));
-      }
-    } else if (bs.type === "experience" || as.type === "experience") {
-      const bJ = bs.items || [], aJ = as.items || [];
-      const jm = Math.min(bJ.length, aJ.length);
-      for (let j = 0; j < jm; j++) {
-        const bj = bJ[j] || {}, aj = aJ[j] || {};
-        const label = `${heading} > ${aj.company || bj.company || ""} — ${aj.job_title || bj.job_title || ""}`.trim();
-        const bb = bj.bullets || [], ab = aj.bullets || [];
-        const bm = Math.max(bb.length, ab.length);
-        for (let k = 0; k < bm; k++) {
-          const bef = bb[k], aft = ab[k];
-          if ((bef || "") !== (aft || "")) {
-            changes.push(_diffChange(`${label} > bullet ${k + 1}`, bef, aft));
-          }
-        }
-      }
-    } else if (bs.type === "projects" || as.type === "projects") {
-      const bP = bs.items || [], aP = as.items || [];
-      const pm = Math.min(bP.length, aP.length);
-      for (let j = 0; j < pm; j++) {
-        const bp = bP[j] || {}, ap = aP[j] || {};
-        const label = `${heading} > ${ap.name || bp.name || `Project ${j + 1}`}`;
-        if ((bp.description || "") !== (ap.description || "")) {
-          changes.push(_diffChange(`${label} > description`, bp.description, ap.description));
-        }
-        if ((bp.technologies || "") !== (ap.technologies || "")) {
-          changes.push(_diffChange(`${label} > technologies`, bp.technologies, ap.technologies));
-        }
-        const bb = bp.bullets || [], ab = ap.bullets || [];
-        const bm = Math.max(bb.length, ab.length);
-        for (let k = 0; k < bm; k++) {
-          if ((bb[k] || "") !== (ab[k] || "")) {
-            changes.push(_diffChange(`${label} > bullet ${k + 1}`, bb[k], ab[k]));
-          }
-        }
-      }
-    } else {
-      // education / simple_list / unknown — JSON-string fallback
-      const beforeStr = JSON.stringify(bs.items ?? bs);
-      const afterStr  = JSON.stringify(as.items ?? as);
-      if (beforeStr !== afterStr) {
-        changes.push(_diffChange(heading, beforeStr, afterStr));
-      }
-    }
-  }
-  // Added / removed sections
-  for (let i = m; i < aSecs.length; i++) changes.push(_diffChange(`+ ${aSecs[i].heading || `Section ${i + 1}`}`, "", JSON.stringify(aSecs[i])));
-  for (let i = m; i < bSecs.length; i++) changes.push(_diffChange(`− ${bSecs[i].heading || `Section ${i + 1}`}`, JSON.stringify(bSecs[i]), ""));
-
-  return changes;
-}
-
-function renderAutoFixDiff(report) {
-  const row = document.getElementById("ats-diff-row");
-  const panel = document.getElementById("ats-diff-panel");
-  const summary = document.getElementById("ats-diff-summary");
-  const toggleBtn = document.getElementById("ats-diff-toggle");
-  if (!row || !panel || !summary || !toggleBtn) return;
-
-  const initial = report && report.initial_resume;
-  if (!initial || !tailoredData) {
-    row.style.display = "none";
-    panel.style.display = "none";
-    panel.innerHTML = "";
-    return;
-  }
-
-  const changes = diffResume(initial, tailoredData);
-  const initScore = report.initial_score;
-  const finalScore = report.score;
-  const delta = (typeof initScore === "number" && typeof finalScore === "number")
-    ? `${initScore}% → ${finalScore}%` : "";
-  summary.textContent = `${changes.length} field${changes.length === 1 ? "" : "s"} changed${delta ? " · " + delta : ""}`;
-
-  row.style.display = "";
-  panel.style.display = "none";   // collapsed by default
-  panel.innerHTML = "";
-  toggleBtn.textContent = "View auto-fix changes";
-
-  // Build the diff DOM lazily on first toggle so we don't pay if user never opens it.
-  let built = false;
-  toggleBtn.onclick = () => {
-    if (!built) {
-      changes.forEach((c) => {
-        const item = document.createElement("div");
-        item.className = "diff-item";
-        const head = document.createElement("div");
-        head.className = "diff-path";
-        head.textContent = c.path;
-        item.appendChild(head);
-
-        if (!c.before) {
-          const after = document.createElement("div");
-          after.className = "diff-side diff-after";
-          const ins = document.createElement("ins");
-          ins.className = "diff-added";
-          ins.textContent = c.after;
-          after.appendChild(ins);
-          item.appendChild(after);
-        } else if (!c.after) {
-          const before = document.createElement("div");
-          before.className = "diff-side diff-before";
-          const del = document.createElement("del");
-          del.className = "diff-removed";
-          del.textContent = c.before;
-          before.appendChild(del);
-          item.appendChild(before);
-        } else {
-          const wd = _wordDiff(c.before, c.after);
-          item.appendChild(_renderDiffSide(wd.before, "before"));
-          item.appendChild(_renderDiffSide(wd.after,  "after"));
-        }
-        panel.appendChild(item);
-      });
-      built = true;
-    }
-    const showing = panel.style.display !== "none";
-    panel.style.display = showing ? "none" : "";
-    toggleBtn.textContent = showing ? "View auto-fix changes" : "Hide auto-fix changes";
-  };
-}
-
-// ── ATS panel ──
-function renderAtsPanel(report) {
-  const panel = document.getElementById("ats-panel");
-  if (!panel) return;
-  if (!report) { panel.style.display = "none"; return; }
-
-  const numEl = document.getElementById("ats-score-num");
-  const badgeEl = document.getElementById("ats-score-badge");
-  const targetLine = document.getElementById("ats-target-line");
-  const notesLine = document.getElementById("ats-notes-line");
-  const matchedEl = document.getElementById("ats-matched-chips");
-  const missingEl = document.getElementById("ats-missing-chips");
-
-  panel.style.display = "";
-
-  const target = report.target ?? 85;
-  const score = report.score;
-
-  if (score === null || score === undefined) {
-    numEl.textContent = "—";
-    badgeEl.dataset.tier = "unknown";
-    targetLine.textContent = `ATS scoring unavailable${report.error ? ": " + report.error : ""}.`;
-    notesLine.textContent = "";
-    matchedEl.innerHTML = "";
-    missingEl.innerHTML = "";
-    return;
-  }
-
-  numEl.textContent = `${score}%`;
-  badgeEl.dataset.tier = score >= target ? "good" : (score >= 70 ? "ok" : "low");
-  const passes = report.passes || 0;
-  const history = Array.isArray(report.history) ? report.history : [];
-  const floor = report.floor ?? 80;
-  const historyText = history.length > 1 ? ` (${history.join(" → ")})` : "";
-  const passText = passes > 0 ? ` after ${passes} refinement pass${passes === 1 ? "" : "es"}${historyText}` : "";
-  if (score >= target) {
-    targetLine.textContent = `Hit the ${target}% target${passText}.`;
-  } else if (score >= floor) {
-    targetLine.textContent = `Above the ${floor}% floor but below the ${target}% target${passText}. Surface the missing keywords manually if your experience supports them.`;
-  } else {
-    targetLine.textContent = `Below the ${floor}% floor${passText}. Auto-fix exhausted its rewrite budget — likely the original resume doesn't support enough of the JD's keywords. Edit manually or pick a different role.`;
-  }
-  notesLine.textContent = report.notes || "";
-
-  matchedEl.innerHTML = "";
-  (report.matched_keywords || []).forEach((kw) => {
-    const span = document.createElement("span");
-    span.className = "ats-chip ats-chip-matched";
-    span.textContent = kw;
-    matchedEl.appendChild(span);
-  });
-  missingEl.innerHTML = "";
-  (report.missing_keywords || []).forEach((kw) => {
-    const span = document.createElement("span");
-    span.className = "ats-chip ats-chip-missing";
-    span.textContent = kw;
-    missingEl.appendChild(span);
-  });
-
-  renderAutoFixDiff(report);
-}
-
-// ── Keyword heatmap (per-section density on the resume preview) ──
-function collectActiveKeywords() {
-  const set = new Set();
-  const add = (k) => {
-    if (!k) return;
-    const v = (typeof k === "string") ? k : (k.keyword || "");
-    if (v && v.length >= 2) set.add(v);
-  };
-  if (lastAtsReport) {
-    (lastAtsReport.matched_keywords || []).forEach(add);
-    (lastAtsReport.missing_keywords || []).forEach(add);
-  }
-  (lastJdKeywords || []).forEach(add);
-  return [...set];
-}
-
-function _kwRegex(keywords) {
-  if (!keywords || !keywords.length) return null;
-  // Sort longest-first so multi-word terms win against subword matches.
-  const sorted = [...new Set(keywords)].sort((a, b) => b.length - a.length);
-  const escaped = sorted.map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  // Word-ish boundary: not preceded/followed by alphanum (allow hyphenated terms inside)
-  return new RegExp(`(?<![A-Za-z0-9])(${escaped.join("|")})(?![A-Za-z0-9])`, "gi");
-}
-
-function _highlightInNode(node, re) {
-  if (!re) return 0;
-  if (node.nodeType === Node.TEXT_NODE) {
-    const text = node.nodeValue;
-    re.lastIndex = 0;
-    if (!re.test(text)) return 0;
-    re.lastIndex = 0;
-    const frag = document.createDocumentFragment();
-    let last = 0, total = 0, m;
-    while ((m = re.exec(text)) !== null) {
-      if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
-      const mark = document.createElement("mark");
-      mark.className = "kw-hit";
-      mark.textContent = m[0];
-      frag.appendChild(mark);
-      last = m.index + m[0].length;
-      total++;
-    }
-    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
-    node.parentNode.replaceChild(frag, node);
-    return total;
-  }
-  if (node.nodeType !== Node.ELEMENT_NODE) return 0;
-  const tag = node.tagName;
-  if (tag === "A" || tag === "MARK" || tag === "SCRIPT" || tag === "STYLE") return 0;
-  let total = 0;
-  Array.from(node.childNodes).forEach((c) => { total += _highlightInNode(c, re); });
-  return total;
-}
-
-function applyKeywordHeatmap(rootEl, keywords) {
-  // Clear any prior badges
-  rootEl.querySelectorAll(".r-section-density").forEach((n) => n.remove());
-  const re = _kwRegex(keywords);
-  if (!re) return;
-
-  const sections = [];
-  let current = null;
-  Array.from(rootEl.children).forEach((child) => {
-    if (child.classList && child.classList.contains("r-section-header")) {
-      if (current) sections.push(current);
-      current = { header: child, hits: 0 };
-      return;
-    }
-    if (!current) return;  // pre-section content (name/title/contact)
-    current.hits += _highlightInNode(child, re);
-  });
-  if (current) sections.push(current);
-
-  sections.forEach((s) => {
-    if (s.hits > 0) {
-      const badge = document.createElement("span");
-      badge.className = "r-section-density";
-      badge.dataset.tier = s.hits >= 6 ? "high" : (s.hits >= 3 ? "mid" : "low");
-      badge.textContent = `${s.hits} keyword${s.hits === 1 ? "" : "s"}`;
-      s.header.appendChild(badge);
-    }
-  });
-}
 
 // ── Filename helpers ──
 const dlCompanyInput = document.getElementById("dl-company");
@@ -977,7 +606,6 @@ function refreshFilenameInput() {
 function renderResults(data) {
   const preview = document.getElementById("resume-preview");
   preview.innerHTML = buildResumeHTML(data);
-  applyKeywordHeatmap(preview, collectActiveKeywords());
   refreshFilenameInput();
 
   // Populate editable contact fields
@@ -1314,68 +942,6 @@ function renderQAResults(answers) {
   });
 }
 
-// ── JD keyword preview ──
-let lastJdKeywords = [];   // most recent preview list (used by heatmap as a seed)
-
-function renderKwPreview(keywords, mode) {
-  const cloud = document.getElementById("kw-preview-cloud");
-  const status = document.getElementById("kw-preview-status");
-  if (!keywords || keywords.length === 0) {
-    cloud.style.display = "none";
-    cloud.innerHTML = "";
-    status.textContent = "No keywords found. Try a longer JD.";
-    return;
-  }
-  cloud.innerHTML = "";
-  cloud.style.display = "";
-  keywords.forEach((kw) => {
-    const span = document.createElement("span");
-    span.className = "kw-chip";
-    if (kw.priority === "preferred")     span.classList.add("kw-chip-preferred");
-    else if (kw.priority === "nice_to_have") span.classList.add("kw-chip-nth");
-    else if (kw.priority === "required") span.classList.add("kw-chip-required");
-    if (kw.count && kw.count > 1) span.dataset.count = kw.count;
-    span.textContent = kw.keyword + (kw.count && kw.count > 1 ? ` ×${kw.count}` : "");
-    span.title = [kw.priority, kw.category].filter(Boolean).join(" · ");
-    cloud.appendChild(span);
-  });
-  const tag = mode === "ai" ? "AI-extracted" : "heuristic";
-  status.textContent = `${keywords.length} keywords (${tag}). Tailoring will target ≥85% coverage of these.`;
-}
-
-async function previewKeywords(useAi) {
-  const jd = document.getElementById("jd-text").value.trim();
-  const status = document.getElementById("kw-preview-status");
-  if (!jd) { showError("Paste the job description first."); return; }
-  status.textContent = useAi ? "Asking the AI..." : "Scanning JD...";
-
-  const body = { jd, mode: useAi ? "ai" : "heuristic" };
-  if (useAi) {
-    body.provider = getActiveProvider();
-    body.api_key = getActiveApiKey();
-    body.model = getActiveModel();
-    body.base_url = getActiveBaseUrl();
-  }
-
-  try {
-    const res = await authFetch("/api/jd-keywords", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const json = await res.json();
-    if (!res.ok || json.error) throw new Error(json.error || "Keyword preview failed.");
-    lastJdKeywords = json.keywords || [];
-    renderKwPreview(lastJdKeywords, json.mode);
-  } catch (err) {
-    status.textContent = "";
-    showError(err.message);
-  }
-}
-
-document.getElementById("kw-preview-btn").addEventListener("click", () => previewKeywords(false));
-document.getElementById("kw-preview-ai-btn").addEventListener("click", () => previewKeywords(true));
-
 // ── Job Application Tracker ──
 const trackerTbody = document.getElementById("tracker-tbody");
 const trackerEmpty = document.getElementById("tracker-empty");
@@ -1583,8 +1149,7 @@ function collectSettings() {
     providerKeys: getProviderMap(STORAGE_KEYS.providerKeys),
     providerModels: getProviderMap(STORAGE_KEYS.providerModels),
     providerBaseUrls: getProviderMap(STORAGE_KEYS.providerBaseUrls),
-    fastMode: loadFromStorage(STORAGE_KEYS.fastMode) || "0",
-    preserveMode: loadFromStorage(STORAGE_KEYS.preserveMode) || "1",
+    preserveMode: loadFromStorage(STORAGE_KEYS.preserveMode) || "0",
     pdfTemplate: loadFromStorage(STORAGE_KEYS.pdfTemplate) || "",
   };
 }
@@ -1621,7 +1186,6 @@ async function pullSettingsFromServer() {
     // Scalar prefs: only adopt the server value if nothing is set locally yet.
     if (s.provider && !loadFromStorage(STORAGE_KEYS.provider)) saveToStorage(STORAGE_KEYS.provider, s.provider);
     if (s.pdfTemplate && !loadFromStorage(STORAGE_KEYS.pdfTemplate)) saveToStorage(STORAGE_KEYS.pdfTemplate, s.pdfTemplate);
-    if (s.fastMode != null && loadFromStorage(STORAGE_KEYS.fastMode) == null) saveToStorage(STORAGE_KEYS.fastMode, s.fastMode);
     if (s.preserveMode != null && loadFromStorage(STORAGE_KEYS.preserveMode) == null) saveToStorage(STORAGE_KEYS.preserveMode, s.preserveMode);
   } catch (err) {
     console.warn("Could not load settings:", err.message);
@@ -1646,7 +1210,6 @@ async function saveResumeToServer(jd) {
         company: lastJobMeta.company || (dlCompanyInput && dlCompanyInput.value.trim()) || "",
         jd: jd || savedJDText || "",
         data: tailoredData,
-        ats: lastAtsReport || null,
       }),
     });
     const json = await res.json();
@@ -1690,10 +1253,9 @@ function renderSavedResumes(list) {
     const info = document.createElement("div");
     info.className = "saved-info";
     const titleLine = [r.title, r.company].filter(Boolean).join(" · ") || r.name || "Untitled resume";
-    const scoreTxt = (typeof r.score === "number") ? ` · ATS ${r.score}%` : "";
     info.innerHTML =
       `<div class="saved-title">${esc(titleLine)}</div>` +
-      `<div class="saved-meta">${esc(formatSavedDate(r.created_at))}${esc(scoreTxt)}</div>`;
+      `<div class="saved-meta">${esc(formatSavedDate(r.created_at))}</div>`;
     card.appendChild(info);
 
     const actions = document.createElement("div");
@@ -1725,7 +1287,6 @@ async function openSavedResume(id) {
     const rec = json.resume || {};
     tailoredData = rec.data || null;
     savedJDText = rec.jd || "";
-    lastAtsReport = rec.ats || null;
     lastJobMeta = normalizeJobMeta({ company: rec.company, position: rec.title });
     currentResumeId = id;
     if (!tailoredData) throw new Error("This saved resume has no data.");
@@ -1736,11 +1297,9 @@ async function openSavedResume(id) {
 
     saveToStorage(STORAGE_KEYS.tailoredData, tailoredData);
     saveToStorage(STORAGE_KEYS.savedJD, savedJDText);
-    saveToStorage(STORAGE_KEYS.ats, lastAtsReport);
     saveToStorage(STORAGE_KEYS.jobMeta, lastJobMeta);
 
     renderResults(tailoredData);
-    renderAtsPanel(lastAtsReport);
     resultsSection.classList.add("active");
     loadMyResumes();  // refresh active highlight
     resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1812,20 +1371,11 @@ function restoreState() {
   if (savedJD) document.getElementById("jd-text").value = savedJD;
   if (savedPrompt) document.getElementById("prompt-text").value = savedPrompt;
 
-  // Fast mode toggle
-  const fastBox = document.getElementById("fast-mode-checkbox");
-  if (fastBox) {
-    fastBox.checked = loadFromStorage(STORAGE_KEYS.fastMode) === "1";
-    fastBox.addEventListener("change", () => {
-      saveToStorage(STORAGE_KEYS.fastMode, fastBox.checked ? "1" : "0");
-      pushSettingsToServer();
-    });
-  }
-
-  // Keyword-swap (preservation) mode — defaults ON unless explicitly turned off.
+  // Keyword-swap (preservation) mode — defaults OFF, so the default is full experience
+  // tailoring. Tick it to only swap keywords and keep the original wording/lengths.
   const preserveBox = document.getElementById("preserve-mode-checkbox");
   if (preserveBox) {
-    preserveBox.checked = loadFromStorage(STORAGE_KEYS.preserveMode) !== "0";
+    preserveBox.checked = loadFromStorage(STORAGE_KEYS.preserveMode) === "1";
     preserveBox.addEventListener("change", () => {
       saveToStorage(STORAGE_KEYS.preserveMode, preserveBox.checked ? "1" : "0");
       pushSettingsToServer();
@@ -1868,9 +1418,7 @@ function restoreState() {
   if (savedTailored) {
     tailoredData = savedTailored;
     savedJDText = savedJDContext || "";
-    lastAtsReport = loadJSONFromStorage(STORAGE_KEYS.ats);
     renderResults(tailoredData);
-    renderAtsPanel(lastAtsReport);
     resultsSection.classList.add("active");
   }
 

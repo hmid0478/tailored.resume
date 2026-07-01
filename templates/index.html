@@ -142,14 +142,6 @@
         <div class="input-card jd-card">
           <h3><span class="icon">3</span> Job Description <span class="jd-badge">Changes each application</span></h3>
           <textarea id="jd-text" rows="10" placeholder="Paste the full job description here.&#10;&#10;This is the only thing you need to change for each new application."></textarea>
-
-          <!-- JD keyword preview -->
-          <div class="kw-preview-row">
-            <button type="button" class="btn btn-secondary btn-sm" id="kw-preview-btn">Preview keywords (free)</button>
-            <button type="button" class="btn btn-secondary btn-sm" id="kw-preview-ai-btn" title="Use the AI to extract the same keywords the ATS scorer will look for. Costs tokens.">Preview with AI</button>
-            <span class="kw-preview-status" id="kw-preview-status"></span>
-          </div>
-          <div class="kw-preview-cloud" id="kw-preview-cloud" style="display: none;"></div>
         </div>
       </div>
 
@@ -160,11 +152,6 @@
             <input type="checkbox" id="preserve-mode-checkbox" />
             <span>Keyword-swap only</span>
             <span class="label-hint">— keep your resume's exact wording &amp; lengths; only swap technologies to match the JD (incl. old roles)</span>
-          </label>
-          <label class="fast-mode-toggle">
-            <input type="checkbox" id="fast-mode-checkbox" />
-            <span>Fast mode</span>
-            <span class="label-hint">— skip ATS auto-fix loop (3-6× faster, no score)</span>
           </label>
         </div>
         <button type="submit" class="btn btn-primary">Tailor My Resume</button>
@@ -193,37 +180,6 @@
           </div>
           <div class="dl-filename-preview"><code id="filename-preview">resume.pdf</code></div>
         </div>
-      </div>
-
-      <!-- ATS Score panel -->
-      <div class="ats-panel" id="ats-panel" style="display: none;">
-        <div class="ats-summary">
-          <div class="ats-score" id="ats-score-badge">
-            <span class="ats-score-num" id="ats-score-num">—</span>
-            <span class="ats-score-label">ATS match</span>
-          </div>
-          <div class="ats-meta">
-            <div class="ats-target" id="ats-target-line"></div>
-            <div class="ats-notes" id="ats-notes-line"></div>
-          </div>
-        </div>
-        <div class="ats-keywords">
-          <div class="ats-kw-block">
-            <div class="ats-kw-title">Matched keywords</div>
-            <div class="ats-kw-chips" id="ats-matched-chips"></div>
-          </div>
-          <div class="ats-kw-block">
-            <div class="ats-kw-title">Missing keywords <span class="label-hint">(only add what your real experience supports)</span></div>
-            <div class="ats-kw-chips" id="ats-missing-chips"></div>
-          </div>
-        </div>
-
-        <!-- Auto-fix diff (only shown when remediation ran) -->
-        <div class="ats-diff-row" id="ats-diff-row" style="display: none;">
-          <button type="button" class="btn btn-secondary btn-sm" id="ats-diff-toggle">View auto-fix changes</button>
-          <span class="ats-diff-summary" id="ats-diff-summary"></span>
-        </div>
-        <div class="ats-diff-panel" id="ats-diff-panel" style="display: none;"></div>
       </div>
 
       <!-- Editable contact fields -->

@@ -446,12 +446,14 @@ FOLLOW THESE RULES WITH ZERO EXCEPTIONS:
     Rules for each bullet:
     a) Start with the STRONGEST action verb (no two bullets should start with same verb)
     b) Front-load JD keywords in the first half of the bullet
-    c) Include at least ONE metric per bullet (%, #, scale, time saved)
+    c) Include at least ONE metric per bullet (%, #, scale, time saved) IF the original bullet had one — never invent numbers
     d) Connect the action to BUSINESS IMPACT (not just technical output)
     e) Use JD's EXACT phrases where natural
-    f) If a bullet doesn't serve this specific JD, either REFRAME it or REMOVE it
-    g) Aim for 5-7 bullets per recent role, 4-5 for older roles
-    h) Most impactful/JD-aligned bullets go FIRST within each role
+    f) If a bullet doesn't obviously serve this JD, REFRAME it to connect to the JD — NEVER delete it
+    g) KEEP EVERY BULLET from the original resume, for EVERY role (recent AND older). Do NOT
+       drop, merge, trim, condense, or summarize bullets. The tailored resume must contain the
+       SAME number of bullets per role as the original — reword each one, but remove none.
+    h) Most impactful/JD-aligned bullets go FIRST within each role (reorder — never remove)
 
 3.6 — EXPERIENCE ORDERING WITHIN EACH ROLE
     Reorder bullets within each job to match JD priority:
@@ -561,8 +563,13 @@ Before delivering, verify:
     - "large-scale systems" -> "systems handling 5M+ records/month"
 
 5.6 — THE RECENCY BIAS CHECK
-    Most recent role should have the MOST bullets and STRONGEST alignment.
-    Older roles can be condensed — but don't lose critical JD-matching experience.
+    Most recent role should have the STRONGEST alignment. Do NOT condense, trim, or drop
+    bullets from older roles — keep ALL of them, just reword to align with the JD.
+
+5.7 — THE COMPLETENESS CHECK (HARD REQUIREMENT)
+    Before finalizing, confirm the tailored resume contains EVERY work experience entry and
+    EVERY bullet that was in the original resume. If any bullet is missing, add it back
+    (reworded to fit the JD). The output must never be shorter than the original.
 
 ================================================================================
 CONSTRAINTS & ANTI-PATTERNS
@@ -754,9 +761,10 @@ def _build_tailor_user_msg(resume_text: str, prompt_text: str, jd_text: str, det
 
     if preserve_mode:
         rules_block = f"""CRITICAL RULES — KEYWORD-SWAP / PRESERVATION MODE (these OVERRIDE any rewrite guidance above):
-1. Reproduce the resume EXACTLY: same sections in the SAME order ([{sections_list}]), the SAME
-   number of bullets, and every sentence/bullet/paragraph kept with the SAME wording and the
-   SAME approximate length. Do NOT rewrite, expand, shorten, reorder, or add metrics.
+1. Reproduce the resume EXACTLY: same sections in the SAME order ([{sections_list}]), and INCLUDE
+   EVERY bullet from EVERY role — drop none, merge none. Keep every sentence/bullet/paragraph
+   with the SAME wording and the SAME approximate length. Do NOT rewrite, expand, shorten,
+   reorder, or add metrics. The output must have the same number of bullets as the original.
 2. The ONLY change allowed is swapping TECHNOLOGY KEYWORDS (languages, frameworks, libraries,
    tools, platforms) to the JOB DESCRIPTION's terminology, in EVERY place they appear — the
    Summary, the Skills section, and ALL work experiences INCLUDING the oldest ones.
@@ -784,7 +792,13 @@ def _build_tailor_user_msg(resume_text: str, prompt_text: str, jd_text: str, det
    technology the candidate has no plausible experience with.
 5. JOB IDENTITY: extract the hiring COMPANY name and the JOB TITLE from the JOB
    DESCRIPTION (not the resume). Put them in "detected_company" and "detected_job_title".
-   If one is not stated, use an empty string for it."""
+   If one is not stated, use an empty string for it.
+6. PRESERVE ALL EXPERIENCE CONTENT (non-negotiable): include EVERY work-experience entry and
+   EVERY bullet from the original resume. Never drop, merge, omit, summarize, or trim bullets —
+   the tailored resume must have AT LEAST as many bullets per role as the original. REWRITE each
+   bullet to reflect the JD's priorities, responsibilities, and exact terminology (this is how
+   you tailor the experience), but keep every one of them. The output must not be shorter than
+   the original resume."""
 
     user_msg = f"""Here are the two inputs:
 
@@ -1215,6 +1229,38 @@ def _section_count(resume: dict) -> int:
     return len(secs) if isinstance(secs, list) else 0
 
 
+_BULLET_MARKERS = ("-", "*", "•", "▪", "◦", "‣", "·", "–", "—", "»", "→")
+
+
+def _count_result_bullets(resume: dict) -> int:
+    """Count bullet points across experience/projects entries in a tailored resume JSON."""
+    total = 0
+    for s in (resume.get("sections") or []):
+        if not isinstance(s, dict):
+            continue
+        items = s.get("items")
+        if isinstance(items, dict):
+            items = [items]
+        for it in (items or []):
+            if isinstance(it, dict):
+                total += len(it.get("bullets") or [])
+    return total
+
+
+def _count_source_bullets(resume_text: str) -> int:
+    """Heuristic count of bullet lines in the ORIGINAL resume text.
+
+    Only counts lines that clearly begin with a bullet marker, so it stays conservative
+    (docx list formatting often strips the marker → we simply won't trigger the guard).
+    """
+    n = 0
+    for line in (resume_text or "").splitlines():
+        st = line.strip()
+        if len(st) > 3 and st[0] in _BULLET_MARKERS:
+            n += 1
+    return n
+
+
 def _do_tailor_call(api_key, resume_text, prompt_text, jd_text, provider,
                     detected_sections, model, base_url, extra_instruction="", preserve_mode=False):
     prompt = _build_tailor_user_msg(resume_text, prompt_text, jd_text, detected_sections, preserve_mode=preserve_mode)
@@ -1286,409 +1332,38 @@ def tailor_resume(
             except Exception as e:
                 print(f"[tailor-guard] retry failed ({e}); keeping first response.")
 
-    return data
-
-
-# ─────────────────────────────────────────────
-# ATS scoring + auto-improvement
-# ─────────────────────────────────────────────
-
-ATS_TARGET_SCORE = 85
-ATS_FLOOR_SCORE = 80           # anything below = aggressive mistake-diagnosis mode
-ATS_MAX_IMPROVE_PASSES = 4     # cap on rewrite attempts
-ATS_NO_PROGRESS_STOP = 2       # bail out if N consecutive passes don't raise the score
-
-
-def _build_ats_score_prompt(resume_json: dict, jd_text: str) -> str:
-    """Prompt that asks the model to ACT AS AN ATS and score keyword coverage."""
-    system = """You are an Applicant Tracking System (ATS) keyword scorer.
-You will be given a tailored resume (as JSON) and a job description.
-
-Your job:
-1. Extract every distinct technical noun, framework, tool, methodology, certification,
-   domain term, and required soft skill from the job description. These are the
-   "JD keywords" the ATS will scan for. Treat multi-word terms (e.g. "event-driven
-   architecture", "core web vitals") as single keywords. Ignore generic filler
-   words ("team", "fast-paced", "collaborate" alone, etc.). Aim for 25-50 keywords.
-
-2. For each JD keyword, check whether it appears (case-insensitive, hyphen/space-
-   insensitive, obvious surface variants) anywhere in the resume JSON: name, title,
-   contact, section headings, content, items, bullets — every text field.
-
-3. Compute coverage = matched_count / total_count, expressed as an integer 0-100.
-
-4. Identify missing keywords that would most likely raise the score if surfaced.
-
-Return ONLY a JSON object in this exact shape, no prose, no fences:
-
-{
-  "score": <integer 0-100>,
-  "matched_keywords": ["..."],
-  "missing_keywords": ["..."],
-  "notes": "one short sentence on the biggest gap, or empty string"
-}"""
-    user = f"""=== TAILORED RESUME (JSON) ===
-{json.dumps(resume_json, ensure_ascii=False)}
-
-=== JOB DESCRIPTION ===
-{jd_text}
-
-Score this resume now. Return ONLY the JSON object."""
-    return f"{system}\n\n{user}"
-
-
-def score_resume_ats(
-    provider: str,
-    api_key: str,
-    resume_json: dict,
-    jd_text: str,
-    model: str | None = None,
-    base_url: str | None = None,
-) -> dict:
-    """Run a single ATS-scoring pass. Returns {score, matched_keywords, missing_keywords, notes}."""
-    prompt = _build_ats_score_prompt(resume_json, jd_text)
-    raw = call_ai(provider, api_key, prompt, max_tokens=2000, model=model, base_url=base_url, json_mode=True)
-    raw = _strip_code_fences(raw)
-    parsed = _safe_json_loads(raw)
-    if not isinstance(parsed, dict) or "score" not in parsed:
-        raise ValueError("ATS scorer returned malformed JSON.")
-    # Normalize
-    parsed["score"] = int(parsed.get("score", 0))
-    parsed["matched_keywords"] = list(parsed.get("matched_keywords") or [])
-    parsed["missing_keywords"] = list(parsed.get("missing_keywords") or [])
-    parsed["notes"] = str(parsed.get("notes") or "")
-    return parsed
-
-
-def _build_ats_improve_prompt(
-    resume_json: dict,
-    jd_text: str,
-    ats_report: dict,
-    original_resume_text: str,
-    target: int,
-    aggressive: bool,
-    preserve_mode: bool = False,
-) -> str:
-    """Prompt that rewrites the tailored resume to push the ATS score above the target.
-
-    aggressive=True triggers a "diagnose mistakes first" mode used when the score is
-    below the floor (default 80). The model is given a checklist of common ATS failure
-    modes and instructed to apply ALL applicable fixes in a single revision.
-
-    preserve_mode=True constrains the pass to keyword swaps only (no length/structure changes).
-    """
-    missing = ", ".join(ats_report.get("missing_keywords") or []) or "(none listed)"
-    matched = ", ".join((ats_report.get("matched_keywords") or [])[:30]) or "(none yet)"
-
-    if preserve_mode:
-        preserve_system = f"""You are adjusting a resume in KEYWORD-SWAP / PRESERVATION MODE to raise its ATS keyword coverage to {target}% or higher.
-
-STRICT CONSTRAINTS:
-- Keep EVERY sentence, bullet, and paragraph with the SAME wording, structure, and length.
-- The ONLY change allowed is swapping an existing technology term for the JOB DESCRIPTION's
-  equivalent term, in ANY section including the oldest roles (e.g. "AngularJS" -> "Angular",
-  "K8s" -> "Kubernetes", "Postgres" -> "PostgreSQL", "message-based" -> "event-driven").
-- Do NOT add or remove sentences/bullets, do NOT add metrics, do NOT reorder, do NOT lengthen
-  or shorten anything. Do NOT invent technologies with no corresponding term already in the resume.
-- Keep the same JSON structure and the candidate's name, title, and contact unchanged.
-
-Return ONLY the revised resume JSON in the same schema, no prose, no fences."""
-        user = f"""=== ORIGINAL RESUME (source of truth — do not exceed what's here) ===
-{original_resume_text}
-
-=== CURRENT TAILORED RESUME (JSON) ===
-{json.dumps(resume_json, ensure_ascii=False)}
-
-=== JOB DESCRIPTION ===
-{jd_text}
-
-=== ATS REPORT ===
-Current score: {ats_report.get('score')}  (target {target}%)
-Already matched (do not lose these): {matched}
-Missing keywords — surface these ONLY by swapping an existing resume term that means the same thing: {missing}
-
-Apply keyword swaps now. Return ONLY the revised JSON object."""
-        return f"{preserve_system}\n\n{user}"
-
-    base_constraints = f"""You are revising a tailored resume to raise its ATS keyword-coverage score to {target}% or higher.
-
-CONSTRAINTS — non-negotiable:
-- NEVER fabricate experience, technologies, projects, metrics, dates, or companies.
-- Only surface keywords the candidate genuinely has, evidenced by the ORIGINAL resume.
-- If a missing keyword is not supported by the original resume, leave it out.
-- Keep the same JSON structure (same section types, same heading order).
-- Keep the candidate's name, title, and contact unchanged.
-- Do not invent new sections; only rewrite existing fields."""
-
-    standard_guidance = """How to raise the score legitimately:
-- Reword existing bullets to use the JD's exact terminology (e.g., "K8s" -> "Kubernetes"
-  if Kubernetes is what JD uses; "C Sharp" -> "C#"; "message-based" -> "event-driven").
-- Move keywords from buried sentences into Skills (as new entries in existing categories)
-  and the Summary's first 25 words.
-- Expand acronyms once: "CI/CD (Continuous Integration / Continuous Deployment)".
-- Rename existing Skills categories to mirror JD section labels exactly."""
-
-    aggressive_diagnosis = f"""THE CURRENT SCORE IS BELOW THE FLOOR ({ATS_FLOOR_SCORE}%). THIS IS A REMEDIATION PASS.
-
-Before rewriting, silently diagnose ALL of the following common ATS failure modes,
-then apply EVERY fix that applies. Do not output the diagnosis — only the corrected JSON.
-
-DIAGNOSTIC CHECKLIST (run through every item):
-1. TERMINOLOGY MISMATCH — Resume uses synonyms / older names where JD uses a specific term.
-   Fix: replace with the JD's exact term wherever the candidate's experience supports it.
-   Examples: "ML" vs "Machine Learning", "K8s" vs "Kubernetes", "AWS Lambda" vs "Serverless",
-   "REST APIs" vs "RESTful Services", "CI/CD" vs "Continuous Integration / Continuous Deployment".
-
-2. BURIED KEYWORDS — A skill appears once in a buried bullet but not in Skills section.
-   Fix: surface it in Skills (under the most relevant existing category) AND keep the bullet.
-   Required keywords should appear at least 2x: once in Skills, once in Experience or Summary.
-
-3. SUMMARY KEYWORD GAP — JD's top 2-3 keywords are missing from Summary's first 25 words.
-   Fix: rewrite Summary opening to front-load those keywords (without fabricating).
-
-4. SKILLS CATEGORY LABEL DRIFT — Skills categories use generic names ("Backend", "Cloud")
-   when JD uses richer phrasing ("Distributed Systems & Microservices", "AWS Cloud Architecture").
-   Fix: rename categories to mirror JD section labels exactly.
-
-5. ACRONYM-FORM MISMATCH — JD uses one form (acronym OR expanded), resume uses the other.
-   Fix: include BOTH forms once: "Continuous Integration / Continuous Deployment (CI/CD)".
-
-6. HYPHEN / SPACE MISMATCH — "event driven" vs "event-driven", "fullstack" vs "full-stack".
-   Fix: match the JD's exact spacing/hyphenation.
-
-7. PRIORITY-STACK INVERSION — JD's #1 priority is buried in the resume's last role.
-   Fix: surface it earlier — Summary, Skills, and the most recent role's first bullet.
-
-8. SOFT-SKILL OMISSION — JD names mentoring / cross-functional / ownership; resume implies
-   them but never uses the words. Fix: use the explicit JD verbs in bullets.
-
-9. MISSING DOMAIN TERMS — JD mentions a regulated industry / scale signal / framework
-   (HIPAA, GDPR, "5M+ users", "real-time"); resume has the experience but doesn't say so.
-   Fix: surface the domain term where the candidate actually worked there.
-
-10. WEAK-VERB BULLETS — Bullets start with "Helped", "Worked on", "Was responsible for".
-    Fix: replace with strong verbs that match JD tone (Architected / Owned / Drove /
-    Optimized / Productionized / Mentored).
-
-PRIORITY ORDER for this pass: (1) terminology fixes, (2) buried keywords surfaced to Skills,
-(3) Summary front-loading, (4) Skills category renaming. These four typically move scores
-from the 60s/70s into the 85+ range without touching the candidate's actual experience.
-
-After applying fixes, mentally re-score against the JD keyword list. If the projected
-score is still below {target}%, apply more fixes from the list until it isn't."""
-
-    system = base_constraints + "\n\n" + (aggressive_diagnosis if aggressive else standard_guidance)
-    system += "\n\nReturn ONLY the revised resume JSON in the same schema, no prose, no fences."
-
-    user = f"""=== ORIGINAL RESUME (source of truth — do not exceed what's here) ===
-{original_resume_text}
-
-=== CURRENT TAILORED RESUME (JSON) ===
-{json.dumps(resume_json, ensure_ascii=False)}
-
-=== JOB DESCRIPTION ===
-{jd_text}
-
-=== ATS REPORT ===
-Current score: {ats_report.get('score')}  (target {target}%, floor {ATS_FLOOR_SCORE}%)
-Already matched (do not lose these): {matched}
-Missing keywords (surface these where the original resume genuinely supports them): {missing}
-Notes: {ats_report.get('notes', '')}
-
-Rewrite the tailored resume JSON now. Return ONLY the revised JSON object."""
-    return f"{system}\n\n{user}"
-
-
-def improve_resume_for_ats(
-    provider: str,
-    api_key: str,
-    resume_json: dict,
-    jd_text: str,
-    ats_report: dict,
-    original_resume_text: str,
-    target: int = ATS_TARGET_SCORE,
-    model: str | None = None,
-    base_url: str | None = None,
-    aggressive: bool = False,
-    preserve_mode: bool = False,
-) -> dict:
-    """Single rewrite pass to incorporate missing keywords without fabrication.
-
-    aggressive=True activates the diagnose-then-fix prompt used when score < ATS_FLOOR_SCORE.
-    preserve_mode=True constrains the pass to keyword swaps only.
-    """
-    prompt = _build_ats_improve_prompt(
-        resume_json, jd_text, ats_report, original_resume_text, target, aggressive,
-        preserve_mode=preserve_mode,
-    )
-    raw = call_ai(provider, api_key, prompt, max_tokens=16000, model=model, base_url=base_url, json_mode=True)
-    raw = _strip_code_fences(raw)
-    data = _safe_json_loads(raw)
-    _validate_resume_shape(data)
-    return data
-
-
-def score_and_improve_resume_ats(
-    provider: str,
-    api_key: str,
-    resume_json: dict,
-    jd_text: str,
-    original_resume_text: str,
-    target: int = ATS_TARGET_SCORE,
-    aggressive: bool = False,
-    model: str | None = None,
-    base_url: str | None = None,
-) -> tuple[dict, dict]:
-    """One-shot: score AND (if low) return an improved resume in a single AI call.
-
-    Saves a full round-trip vs. calling score_resume_ats then improve_resume_for_ats.
-    Returns (improved_or_unchanged_resume_json, ats_report).
-    """
-    missing_hint = ", ".join((resume_json.get("missing_keywords") or [])[:0])  # not used; kept for symmetry
-    score_section = _build_ats_score_prompt(resume_json, jd_text)
-    improve_section = _build_ats_improve_prompt(
-        resume_json, jd_text,
-        {"score": "(unknown — you compute it)", "matched_keywords": [], "missing_keywords": [], "notes": ""},
-        original_resume_text, target, aggressive,
-    )
-
-    combined_system = f"""You will perform TWO tasks in one response and return a single JSON object.
-
-TASK 1 — SCORE THE RESUME:
-{score_section.split('Return ONLY')[0]}
-
-TASK 2 — IF SCORE < {target}, RETURN AN IMPROVED RESUME:
-{improve_section.split('Return ONLY')[0]}
-
-OUTPUT — return ONLY this JSON object, no prose, no fences:
-
-{{
-  "score": <integer 0-100>,
-  "matched_keywords": ["..."],
-  "missing_keywords": ["..."],
-  "notes": "one short sentence on the biggest gap, or empty string",
-  "improved_resume": <revised resume JSON if score < {target}, else null>
-}}
-
-If the score is already >= {target}, set improved_resume to null and skip the rewrite.
-If you do rewrite, the improved_resume MUST follow the same schema as the input
-resume (same section types, same heading order, name/title/contact unchanged)."""
-    user = f"""=== ORIGINAL RESUME (source of truth) ===
-{original_resume_text}
-
-=== CURRENT TAILORED RESUME (JSON) ===
-{json.dumps(resume_json, ensure_ascii=False)}
-
-=== JOB DESCRIPTION ===
-{jd_text}
-
-Return ONLY the combined JSON object."""
-    prompt = f"{combined_system}\n\n{user}"
-    raw = call_ai(provider, api_key, prompt, max_tokens=16000, model=model, base_url=base_url, json_mode=True)
-    raw = _strip_code_fences(raw)
-    parsed = _safe_json_loads(raw)
-    if not isinstance(parsed, dict) or "score" not in parsed:
-        raise ValueError("Combined ATS scorer returned malformed JSON.")
-
-    ats = {
-        "score": int(parsed.get("score", 0)),
-        "matched_keywords": list(parsed.get("matched_keywords") or []),
-        "missing_keywords": list(parsed.get("missing_keywords") or []),
-        "notes": str(parsed.get("notes") or ""),
-    }
-    improved = parsed.get("improved_resume")
-    if improved and isinstance(improved, dict):
+    # Bullet-loss guard: if the model clearly dropped bullet points that the original
+    # resume had, retry once demanding every bullet back. Conservative — only fires when
+    # the source has a solid bullet count and the output lost more than ~25% of them.
+    src_bullets = _count_source_bullets(resume_text)
+    got_bullets = _count_result_bullets(data)
+    if src_bullets >= 6 and got_bullets < src_bullets * 0.75:
+        print(f"[tailor-guard] bullets dropped ({src_bullets} -> {got_bullets}); retrying to restore them.")
+        extra = (
+            f"MANDATORY FIX — the previous attempt DROPPED bullet points. The original resume has "
+            f"about {src_bullets} bullet points, but your output had only {got_bullets}. You MUST "
+            "include EVERY bullet from EVERY role in the original resume — do not drop, merge, trim, "
+            "or summarize any. Reword them to fit the job description if helpful, but keep them ALL. "
+            "Return the full resume with every bullet restored."
+        )
         try:
-            _validate_resume_shape(improved)
-            # Reject any improvement that drops sections we previously had.
-            if not _has_all_sections(improved, resume_json):
-                print(f"[improve-guard] rejecting rewrite: lost sections "
-                      f"({_section_count(resume_json)} -> {_section_count(improved)}). "
-                      f"keeping previous version.")
-                return resume_json, ats
-            # Reject if a section that previously had items is now empty.
-            before_by_h = {(s.get("heading","") or "").strip().lower(): s
-                           for s in (resume_json.get("sections") or []) if isinstance(s, dict)}
-            after_by_h = {(s.get("heading","") or "").strip().lower(): s
-                          for s in (improved.get("sections") or []) if isinstance(s, dict)}
-            for h, before_sec in before_by_h.items():
-                after_sec = after_by_h.get(h)
-                if not after_sec:
-                    continue
-                # Items / content presence check
-                bef_items = before_sec.get("items") or before_sec.get("content")
-                aft_items = after_sec.get("items") or after_sec.get("content")
-                if bef_items and not aft_items:
-                    print(f"[improve-guard] rejecting rewrite: section {h!r} "
-                          f"became empty. keeping previous version.")
-                    return resume_json, ats
-            return improved, ats
+            retry = _do_tailor_call(api_key, resume_text, prompt_text, jd_text, provider,
+                                    detected_sections, model, base_url, extra_instruction=extra,
+                                    preserve_mode=preserve_mode)
+            if _count_result_bullets(retry) > got_bullets and (
+                not detected_sections or _has_all_sections(retry, data)):
+                data = retry
+            else:
+                print("[tailor-guard] bullet retry didn't improve; keeping previous response.")
         except Exception as e:
-            print(f"[improve-guard] rejecting rewrite due to validation error: {e}")
-    return resume_json, ats
+            print(f"[tailor-guard] bullet retry failed ({e}); keeping previous response.")
+
+    return data
 
 
 # ─────────────────────────────────────────────
-# Deterministic ATS scoring (real keyword coverage, not an AI guess)
+# Job identity extraction (company / title from the JD)
 # ─────────────────────────────────────────────
-
-def _resume_to_text(resume: dict) -> str:
-    """Flatten every text field of a resume JSON into one searchable string."""
-    parts: list[str] = []
-
-    def walk(v):
-        if isinstance(v, str):
-            parts.append(v)
-        elif isinstance(v, dict):
-            for vv in v.values():
-                walk(vv)
-        elif isinstance(v, list):
-            for vv in v:
-                walk(vv)
-
-    walk(resume)
-    return " ".join(parts)
-
-
-def _keyword_present(keyword: str, text: str) -> bool:
-    """True if `keyword` appears in `text`, tolerant of case and space/hyphen variants.
-
-    Handles tech tokens with punctuation (C#, C++, .NET, Node.js) via non-alphanumeric
-    boundaries rather than \b word boundaries (which mishandle '#', '+', '.').
-    """
-    kw = (keyword or "").strip()
-    if not kw:
-        return False
-    esc = re.escape(kw)
-    # Let a space OR hyphen in the keyword match either (or none): "event-driven" ~ "event driven".
-    esc = esc.replace(r"\ ", r"[\s\-]*").replace(r"\-", r"[\s\-]*")
-    pattern = r"(?<![A-Za-z0-9])" + esc + r"(?![A-Za-z0-9])"
-    try:
-        return re.search(pattern, text, re.IGNORECASE) is not None
-    except re.error:
-        return kw.lower() in text.lower()
-
-
-def score_resume_keywords(resume_json: dict, keywords: list[str]) -> dict:
-    """Deterministically score keyword coverage. Returns the ATS-report shape."""
-    text = _resume_to_text(resume_json)
-    matched, missing = [], []
-    seen = set()
-    for k in keywords:
-        kw = (k if isinstance(k, str) else (k or {}).get("keyword", "")).strip()
-        if not kw or kw.lower() in seen:
-            continue
-        seen.add(kw.lower())
-        (matched if _keyword_present(kw, text) else missing).append(kw)
-    total = len(matched) + len(missing)
-    score = round(100 * len(matched) / total) if total else 0
-    return {
-        "score": score,
-        "matched_keywords": matched,
-        "missing_keywords": missing,
-        "notes": "",
-    }
-
 
 def _pop_job_meta(resume: dict) -> dict:
     """Pull the JD-derived company/title out of the resume dict (and remove them)."""
@@ -1702,285 +1377,6 @@ def _pop_job_meta(resume: dict) -> dict:
     if position.lower() in ("empty string", "n/a", "none", "not specified", "unknown"):
         position = ""
     return {"company": company, "position": position}
-
-
-def _get_jd_keywords_for_scoring(provider, api_key, jd_text, model, base_url) -> list[str]:
-    """Extract the JD keyword set once per tailor run (AI, with heuristic fallback)."""
-    try:
-        kws = extract_jd_keywords_ai(provider, api_key, jd_text, model=model, base_url=base_url)
-        out = [k.get("keyword", "") for k in kws if k.get("keyword")]
-        if out:
-            return out
-    except Exception as e:
-        print(f"[ats] AI keyword extraction failed ({e}); falling back to heuristic.")
-    return [k["keyword"] for k in extract_jd_keywords_heuristic(jd_text)]
-
-
-def _improvement_is_safe(before: dict, after: dict) -> bool:
-    """Reject a rewrite that dropped a section or emptied a previously-filled one."""
-    if not isinstance(after, dict):
-        return False
-    if not _has_all_sections(after, before):
-        return False
-    before_by_h = {(s.get("heading", "") or "").strip().lower(): s
-                   for s in (before.get("sections") or []) if isinstance(s, dict)}
-    after_by_h = {(s.get("heading", "") or "").strip().lower(): s
-                  for s in (after.get("sections") or []) if isinstance(s, dict)}
-    for h, bs in before_by_h.items():
-        as_ = after_by_h.get(h)
-        if not as_:
-            continue
-        if (bs.get("items") or bs.get("content")) and not (as_.get("items") or as_.get("content")):
-            return False
-    return True
-
-
-def tailor_with_ats_target(
-    api_key: str,
-    resume_text: str,
-    prompt_text: str,
-    jd_text: str,
-    provider: str,
-    detected_sections: list[str] | None,
-    model: str | None,
-    base_url: str | None,
-    target: int = ATS_TARGET_SCORE,
-    fast_mode: bool = False,
-    preserve_mode: bool = False,
-) -> tuple[dict, dict | None, dict]:
-    """Tailor → score → (if low) improve → re-score. Returns (resume_json, ats_report_or_None, job_meta).
-
-    Scoring is DETERMINISTIC: we extract the JD's keyword set once, then literally check
-    which keywords appear in the tailored resume. The score therefore reflects real
-    coverage (and varies per JD) instead of an AI's guess. Each improve pass is fed the
-    concrete missing keywords so it surfaces them into the Summary / Experience.
-
-    fast_mode=True: skip the score+improve loop entirely and return the first tailor pass.
-
-    The ATS pass is best-effort: if it fails for any reason, we still return the tailored
-    resume — ATS scoring should never block delivery of the resume itself.
-    """
-    result = tailor_resume(
-        api_key, resume_text, prompt_text, jd_text, provider, detected_sections,
-        model=model, base_url=base_url, preserve_mode=preserve_mode,
-    )
-    job_meta = _pop_job_meta(result)
-
-    if fast_mode:
-        # No ATS pass — fastest path. Score is unknown.
-        return result, {"score": None, "fast_mode": True, "target": target, "floor": ATS_FLOOR_SCORE,
-                        "passes": 0, "history": [], "matched_keywords": [], "missing_keywords": [],
-                        "notes": "Fast mode — ATS scoring skipped."}, job_meta
-
-    # Snapshot of the initial tailored resume (pre-remediation) so the frontend can diff.
-    initial_result = json.loads(json.dumps(result))
-
-    ats: dict | None = None
-    try:
-        keyword_list = _get_jd_keywords_for_scoring(provider, api_key, jd_text, model, base_url)
-        ats = score_resume_keywords(result, keyword_list)
-        history = [ats["score"]]
-        initial_score = ats["score"]
-        # Keep the best result we've seen — if a remediation pass somehow makes things
-        # worse, we won't ship the regression.
-        best_result, best_ats = result, ats
-        no_progress = 0
-        passes = 0
-
-        while best_ats["score"] < target and passes < ATS_MAX_IMPROVE_PASSES:
-            aggressive = best_ats["score"] < ATS_FLOOR_SCORE
-            # Ask the model to surface the concrete missing keywords into the resume...
-            improved = improve_resume_for_ats(
-                provider, api_key, best_result, jd_text, best_ats, resume_text, target,
-                model=model, base_url=base_url, aggressive=aggressive, preserve_mode=preserve_mode,
-            )
-            passes += 1
-            # ...then re-score deterministically and only keep it if it's both safe and better.
-            if not _improvement_is_safe(best_result, improved):
-                new_ats = {"score": -1}
-            else:
-                new_ats = score_resume_keywords(improved, keyword_list)
-            history.append(max(new_ats["score"], 0))
-
-            if new_ats["score"] > best_ats["score"] and _improvement_is_safe(best_result, improved):
-                best_result, best_ats = improved, new_ats
-                no_progress = 0
-            else:
-                no_progress += 1
-                if no_progress >= ATS_NO_PROGRESS_STOP:
-                    # Two passes without improvement — we've plateaued. Stop burning tokens.
-                    break
-
-        result, ats = best_result, best_ats
-        ats["target"] = target
-        ats["floor"] = ATS_FLOOR_SCORE
-        ats["passes"] = passes
-        ats["history"] = history
-        ats["initial_score"] = initial_score
-        # Only attach the snapshot if the remediation actually changed the resume.
-        if passes > 0 and result is not initial_result:
-            ats["initial_resume"] = initial_result
-    except Exception as e:
-        # Don't fail the whole request just because the scorer choked.
-        traceback.print_exc()
-        ats = {"score": None, "error": str(e), "target": target, "floor": ATS_FLOOR_SCORE,
-               "passes": 0, "history": [], "matched_keywords": [], "missing_keywords": [], "notes": ""}
-
-    return result, ats, job_meta
-
-
-# ─────────────────────────────────────────────
-# JD keyword preview (pre-submit)
-# ─────────────────────────────────────────────
-
-# Filler words / generic terms that should never count as ATS keywords.
-_JD_KW_STOPWORDS = {
-    "the", "and", "or", "a", "an", "of", "in", "on", "for", "to", "with", "as", "by",
-    "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do",
-    "does", "did", "will", "would", "should", "could", "can", "may", "might", "must",
-    "this", "that", "these", "those", "there", "their", "they", "them", "we", "you",
-    "your", "our", "us", "i", "he", "she", "it", "his", "her", "its",
-    "team", "teams", "role", "roles", "company", "companies", "candidate", "candidates",
-    "experience", "experienced", "knowledge", "ability", "abilities", "skills", "skill",
-    "work", "working", "works", "worked", "year", "years", "month", "months", "week",
-    "day", "days", "time", "times", "good", "great", "excellent", "strong", "solid",
-    "passionate", "fast-paced", "fast", "paced", "dynamic", "highly", "very", "well",
-    "across", "within", "throughout", "while", "during", "including", "such",
-    "responsibilities", "responsibility", "qualifications", "qualified", "preferred",
-    "required", "requires", "requirement", "requirements", "must", "plus", "bonus",
-    "opportunity", "position", "job", "jobs", "career", "careers", "applicant",
-    "minimum", "maximum", "etc", "ie", "eg", "e.g.", "i.e.", "and/or",
-    "english", "language", "communication", "communicate", "communicating",
-    "collaborate", "collaboration", "collaborative",
-    "develop", "developing", "development", "developer", "developers",
-    "build", "building", "builder", "builders", "make", "making", "create", "creating",
-    "ensure", "ensuring", "support", "supporting", "help", "helping", "use", "using",
-    "based", "level", "senior", "junior", "mid", "lead", "principal", "staff",
-    "month", "months", "week", "weeks", "day", "days", "hour", "hours", "etc.",
-    "etc", "us", "usa", "united", "states", "remote", "hybrid", "onsite", "on-site",
-    "fulltime", "full-time", "parttime", "part-time", "contract", "contractor",
-}
-
-# Strong "this is a real keyword" hints: tokens that contain these substrings (case-insensitive)
-# get an automatic boost so they survive the cut even if they appear only once.
-_JD_KW_BOOSTERS = (
-    "++", "#", ".js", ".net", "sql", "ai", "ml", "api", "sdk", "ci/cd", "k8s",
-    "aws", "gcp", "azure", "saas", "ios", "ux", "ui",
-)
-
-
-def extract_jd_keywords_heuristic(jd_text: str, top_n: int = 40) -> list[dict]:
-    """Cheap, no-AI keyword extraction. Used for free preview before user spends tokens.
-
-    Returns a list of {keyword, count} dicts, ordered by frequency. Picks up:
-    - Capitalized multi-word terms (likely tech/framework names)
-    - Hyphenated compound terms
-    - Acronyms (2-5 uppercase letters)
-    - Tokens containing booster substrings (.js, ++, #, etc.)
-    """
-    text = jd_text or ""
-    if not text.strip():
-        return []
-
-    counts: dict[str, int] = {}
-
-    def _bump(token: str, weight: int = 1):
-        key = token.strip().strip(".,;:()[]{}\"'").strip()
-        if not key:
-            return
-        if key.lower() in _JD_KW_STOPWORDS:
-            return
-        if len(key) < 2:
-            return
-        # Don't keep pure numbers
-        if key.replace(",", "").replace(".", "").isdigit():
-            return
-        counts[key] = counts.get(key, 0) + weight
-
-    # 1) Multi-word capitalized phrases (e.g., "Continuous Integration", "Core Web Vitals")
-    for m in re.finditer(r"\b(?:[A-Z][a-zA-Z0-9+#./-]+)(?:\s+[A-Z][a-zA-Z0-9+#./-]+){1,3}\b", text):
-        _bump(m.group(0), weight=3)
-
-    # 2) Acronyms (2-5 uppercase letters / digits)
-    for m in re.finditer(r"\b[A-Z][A-Z0-9]{1,4}\b", text):
-        _bump(m.group(0), weight=2)
-
-    # 3) Hyphenated tech words (event-driven, micro-services, full-stack)
-    for m in re.finditer(r"\b[a-zA-Z][a-zA-Z0-9]+(?:-[a-zA-Z][a-zA-Z0-9]+){1,3}\b", text):
-        _bump(m.group(0), weight=2)
-
-    # 4) Tokens containing strong booster substrings (.js, ++, #, etc.)
-    for m in re.finditer(r"[A-Za-z][A-Za-z0-9+#./-]*", text):
-        tok = m.group(0)
-        low = tok.lower()
-        if any(b in low for b in _JD_KW_BOOSTERS):
-            _bump(tok, weight=2)
-
-    # 5) Single capitalized words that aren't sentence-starts: harder to do robustly
-    #    without sentence segmentation. Keep light: tokens that begin with capital and
-    #    contain a digit or special char are likely product names (e.g., "Postgres", "MongoDB").
-    for m in re.finditer(r"\b[A-Z][a-zA-Z]*[A-Z0-9][a-zA-Z0-9]*\b", text):
-        _bump(m.group(0), weight=1)
-
-    # Sort by count desc, then keyword asc; cap at top_n.
-    items = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0].lower()))
-    return [{"keyword": k, "count": c} for k, c in items[:top_n]]
-
-
-def extract_jd_keywords_ai(
-    provider: str,
-    api_key: str,
-    jd_text: str,
-    model: str | None = None,
-    base_url: str | None = None,
-) -> list[dict]:
-    """Ask the AI to extract the same keywords the ATS scorer would look for.
-    Uses the same definition as score_resume_ats so the preview matches reality."""
-    system = """You are an Applicant Tracking System (ATS) keyword extractor.
-From a job description, extract the 25-50 distinct technical/domain keywords an ATS
-would scan for: technologies, frameworks, tools, methodologies, certifications,
-required soft skills (like "mentoring"), and domain terms. Treat multi-word terms
-("event-driven architecture", "core web vitals") as single keywords. Ignore filler
-words ("team", "fast-paced", "passionate", generic verbs).
-
-Return ONLY a JSON object with this shape, no prose, no fences:
-{
-  "keywords": [
-    {"keyword": "TypeScript",  "priority": "required",  "category": "language"},
-    {"keyword": "Kubernetes",  "priority": "preferred", "category": "devops"}
-  ]
-}
-
-priority is one of: "required", "preferred", "nice_to_have"
-category is one of: "language", "framework", "tool", "platform", "methodology",
-                    "domain", "soft_skill", "certification", "data", "other"
-"""
-    user = f"=== JOB DESCRIPTION ===\n{jd_text}\n\nReturn ONLY the JSON object."
-    raw = call_ai(provider, api_key, f"{system}\n\n{user}",
-                  max_tokens=1500, model=model, base_url=base_url, json_mode=True)
-    raw = _strip_code_fences(raw)
-    data = _safe_json_loads(raw)
-    kws = data.get("keywords") if isinstance(data, dict) else data
-    if not isinstance(kws, list):
-        raise ValueError("AI returned malformed keyword list.")
-    cleaned = []
-    seen = set()
-    for k in kws:
-        if isinstance(k, str):
-            kw = k.strip()
-            if kw and kw.lower() not in seen:
-                seen.add(kw.lower())
-                cleaned.append({"keyword": kw, "priority": "required", "category": "other"})
-        elif isinstance(k, dict):
-            kw = (k.get("keyword") or "").strip()
-            if kw and kw.lower() not in seen:
-                seen.add(kw.lower())
-                cleaned.append({
-                    "keyword": kw,
-                    "priority": (k.get("priority") or "required").lower(),
-                    "category": (k.get("category") or "other").lower(),
-                })
-    return cleaned
 
 
 # ─────────────────────────────────────────────
@@ -3163,47 +2559,6 @@ def api_scrape_jd():
         return jsonify({"error": f"Scraping failed: {str(e)}"}), 500
 
 
-@app.route("/api/jd-keywords", methods=["POST"])
-@require_user
-def api_jd_keywords():
-    """Preview the keywords the ATS scorer will look for, before the user spends tokens
-    on a full tailoring run.
-
-    Mode:
-      - "heuristic" (default, free, no AI call) — regex-based extraction.
-      - "ai" — same definition as the ATS scorer; uses tokens.
-    """
-    try:
-        data = request.get_json() or {}
-        jd_text = (data.get("jd") or "").strip()
-        mode = (data.get("mode") or "heuristic").lower()
-        if not jd_text:
-            return jsonify({"error": "Job description is required."}), 400
-
-        if mode == "ai":
-            provider = (data.get("provider") or "anthropic").strip().lower()
-            if provider == "claude":
-                provider = "anthropic"
-            api_key = (data.get("api_key") or "").strip()
-            model = (data.get("model") or "").strip() or None
-            base_url = (data.get("base_url") or "").strip() or None
-            is_local = provider == "ollama" or (provider == "openai_compatible" and base_url and "localhost" in base_url)
-            if not api_key and not is_local:
-                return jsonify({"error": "API key is required for AI keyword extraction."}), 400
-            keywords = extract_jd_keywords_ai(provider, api_key, jd_text, model=model, base_url=base_url)
-            return jsonify({"success": True, "mode": "ai", "keywords": keywords})
-
-        # heuristic mode
-        keywords = extract_jd_keywords_heuristic(jd_text)
-        return jsonify({"success": True, "mode": "heuristic", "keywords": keywords})
-
-    except ValueError as e:
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 400
-    except Exception as e:
-        return _provider_error_response(e)
-
-
 @app.route("/api/tailor", methods=["POST"])
 @require_user
 def api_tailor():
@@ -3214,7 +2569,6 @@ def api_tailor():
         api_key = request.form.get("api_key", "").strip()
         model = request.form.get("model", "").strip() or None
         base_url = request.form.get("base_url", "").strip() or None
-        fast_mode = request.form.get("fast_mode", "").strip().lower() in ("1", "true", "yes", "on")
         preserve_mode = request.form.get("preserve_mode", "").strip().lower() in ("1", "true", "yes", "on")
         # Local providers (Ollama, openai_compatible pointing at localhost) often don't need a key.
         is_local = provider == "ollama" or (provider == "openai_compatible" and base_url and "localhost" in base_url)
@@ -3270,11 +2624,11 @@ def api_tailor():
         # Extract original title from resume text (first few lines, look for a title-like line)
         original_title = _extract_original_title(resume_text)
 
-        result, ats, job_meta = tailor_with_ats_target(
+        result = tailor_resume(
             api_key, resume_text, prompt_text, jd_text, provider, detected_sections,
-            model=model, base_url=base_url, target=ATS_TARGET_SCORE, fast_mode=fast_mode,
-            preserve_mode=preserve_mode,
+            model=model, base_url=base_url, preserve_mode=preserve_mode,
         )
+        job_meta = _pop_job_meta(result)
 
         # Force-override personal info with original values (never let AI change these)
         if personal_info:
@@ -3287,7 +2641,7 @@ def api_tailor():
         if original_title:
             result["title"] = original_title
 
-        return jsonify({"success": True, "data": result, "ats": ats, "job_meta": job_meta})
+        return jsonify({"success": True, "data": result, "job_meta": job_meta})
 
     except ValueError as e:
         traceback.print_exc()

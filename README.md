@@ -1,36 +1,29 @@
 # Resume Tailor
 
-AI-powered resume tailoring app that rewrites your resume for a specific job description, scores it against ATS keyword coverage, auto-fixes anything below 85%, and exports a clean PDF — all driven from a single page in your browser.
+AI-powered resume tailoring app that rewrites (or keyword-swaps) your resume for a specific job description and exports a clean PDF — all driven from a single page in your browser.
 
 Multi-provider: works with **Anthropic Claude**, **Google Gemini**, **OpenAI**, **OpenRouter**, **Groq**, **Together AI**, **Ollama (local)**, or any OpenAI-compatible endpoint.
 
 ## What it does
 
 1. You upload your resume once (`.docx` / `.pdf` / `.txt`).
-2. You paste a job description (or scrape one from a URL).
-3. The app runs a multi-step pipeline:
-   - **Tailor** — rewrites the resume to match the JD using a comprehensive prompt (keyword optimization, ATS rules, power verbs, metrics).
-   - **Score** — separate AI pass acts as an ATS scorer, returns a 0–100 keyword-coverage score with matched / missing keyword chips.
-   - **Auto-fix** — if score < 85, runs up to 4 remediation passes with a 10-item diagnostic checklist (terminology mismatch, buried keywords, summary front-loading, etc.) until the score hits the 85% target. Best-result preservation: a worse rewrite never replaces a better one.
-4. You preview the tailored resume with **per-section keyword density highlighting**, see the **score history** (e.g. `62 → 78 → 86`), optionally view a **side-by-side diff** of what the auto-fix changed, and download the PDF.
+2. You paste a job description.
+3. The app tailors the resume to the JD — either a full rewrite (keyword optimization, power verbs, metrics) or, in **Keyword-swap only** mode, it keeps your exact wording/lengths and only swaps technology terms to match the JD (including older roles).
+4. You preview the tailored resume, tweak the contact fields, and download the PDF (auto-named from the JD's company + job title).
 
 ## Features
 
 - **Accounts & admin portal** — private app behind a login. A separate admin portal (`/admin`) creates/deletes users. Each user's data (resumes, settings, keys) is isolated to their account. See [Authentication & Multi-User](#authentication--multi-user).
 - **Multi-provider AI** — Anthropic, Gemini, OpenAI, OpenRouter, Groq, Together AI, Ollama, and any OpenAI-compatible base URL. Keys, models, and base URLs are stored **per-user on the server**, so they follow the account across devices and never need re-entering.
-- **Deterministic ATS scoring + tech injection** — extracts every technology/keyword from the JD, then literally checks which appear in the tailored resume (real, per-JD coverage — not an AI guess). The auto-fix loop surfaces the missing technologies into the Summary and Experience bullets until it hits ≥85%.
-- **Resume-section-loss guard** — if any AI pass returns a resume with fewer sections than the input, it's rejected and the previous version is kept.
+- **Keyword-swap only mode** — a toggle (on by default) that preserves your resume's exact wording, sentence lengths, and structure, and only substitutes technology keywords to match the JD across every section including older roles. Turn it off for a full aggressive rewrite.
+- **Resume-section-loss guard** — if the AI returns a resume with fewer sections than the input, it retries with an explicit section list and keeps the better result.
 - **JSON repair** — 3-tier fallback (lightweight repair → `json-repair` library → raw dump) so transient LLM JSON quirks (unterminated strings, unquoted keys, single quotes, missing commas) self-heal.
-- **JD keyword preview** — free heuristic mode (regex, no AI cost) or AI-extracted mode shows the 25–50 keywords the ATS will score against, before you spend tokens.
-- **Auto-fix diff view** — word-level red/green diff of every field the remediation changed (per bullet, per skill category).
-- **Per-section density heatmap** — JD keywords highlighted inline in the preview with a hit-count badge per section.
-- **Fast mode** — checkbox next to the Tailor button skips the score+improve loop for a single AI call (3–6× faster).
 - **4 PDF templates** — Minimal Clean (default), Modern Green, Classic Blue, Universal. All ATS-safe (Helvetica, single column, no tables/images).
 - **Auto-naming from the JD** — the tailor step reads the hiring company and job title from the job description and auto-fills the Company / Job title fields (filename becomes `{company} - {title}.pdf`). If only one is present it uses that; if neither, the fields stay blank for you to type.
 - **Application Q&A** — generates first-person answers to job application questions using your tailored resume + JD as context.
 - **Job application tracker** — built-in CRUD table tracks every application (date, company, role, status). Exportable to clipboard for Excel.
 - **Quick-copy LinkedIn bar** — one-click copy of your LinkedIn URL at the top.
-- **Persistent state** — every input (API keys, resume, prompt, JD, fast-mode toggle, template choice, company/title fields, ATS report, score history, scratch state) is saved to localStorage and restored on reload.
+- **Persistent state** — every input (API keys, resume, prompt, JD, keyword-swap toggle, template choice, company/title fields, tailored result) is saved per-user (localStorage + server) and restored on reload.
 - **Robust error handling** — auto-retry on transient provider 5xx errors with exponential backoff (1.5s → 4s → 9s); friendly messages for invalid keys, exhausted quotas, and overloaded models.
 - **Dark theme** — vanilla HTML/CSS/JS, no framework, no build step.
 
@@ -88,7 +81,7 @@ In the "Your Profile" section, upload `.docx`, `.pdf`, or `.txt`. Once uploaded 
 
 ### 3. Add a job description
 
-Paste the JD into the textarea. Optionally click **Preview keywords (free)** under the JD to see what the ATS will score against — no API call.
+Paste the JD into the textarea.
 
 ### 4. (Optional) Fill Company name + Job title
 
@@ -96,14 +89,11 @@ These two fields next to the Download PDF button drive the filename: `{company} 
 
 ### 5. Tailor
 
-Click **Tailor My Resume**. The pipeline runs through tailor → score → (auto-fix loop if needed) → done. Watch the ATS panel for the score and progression history.
-
-If you want maximum speed and don't need the score, tick **Fast mode** before clicking Tailor — it skips the verification loop.
+Click **Tailor My Resume**. Leave **Keyword-swap only** ticked (default) to preserve your exact wording and just swap technologies to match the JD; untick it for a full rewrite.
 
 ### 6. Review
 
-- Resume preview shows your tailored resume with **JD keywords highlighted** inline and a **density badge** on each section header (green ≥6 hits, yellow 3–5, red 1–2).
-- ATS panel shows the score, target/floor, matched / missing keyword chips, and (if auto-fix ran) a **View auto-fix changes** button that opens a per-field word-level diff.
+- Resume preview shows your tailored resume.
 - Edit name / contact / LinkedIn fields above the preview if needed.
 - Pick a PDF template — **Minimal Clean** is the default.
 
@@ -135,7 +125,9 @@ The app ships with a 5,000-word built-in prompt (`DEFAULT_TAILORING_PROMPT` in `
 ## Architecture
 
 ```
-app.py              — All backend logic (routes, AI providers, ATS pipeline, PDF gen, JD scraping)
+app.py              — All backend logic (routes, AI providers, tailoring, PDF gen)
+auth.py             — Password hashing, signed tokens, route guards
+store.py            — Persistent storage (Upstash Redis / local JSON fallback)
 requirements.txt    — Python dependencies
 templates/
   index.html        — Single-page HTML
@@ -146,15 +138,9 @@ static/
 
 **Backend** — Flask with the routes listed below. AI calls go through `call_ai(provider, api_key, prompt, ...)` which dispatches to `_call_anthropic`, `_call_gemini`, or `_call_openai_compatible` (the last covers OpenAI, OpenRouter, Groq, Together, Ollama, LM Studio, and any custom OpenAI-compatible endpoint by swapping `base_url`). Anthropic prompt caching is enabled on the system block. JSON parsing uses a 3-tier repair chain. Auto-retry on transient 5xx with exponential backoff. ASCII-safe sanitization on all prompts and headers.
 
-**ATS pipeline** —
+**Tailoring** — a single AI call turns the resume + JD into structured JSON. In keyword-swap mode a conservative prompt preserves wording/lengths and only aligns technology terms; otherwise the full rewrite prompt applies. The company and job title are extracted from the JD in the same call for auto-naming. A section-loss guard retries once if the model drops a section.
 
-```
-tailor → score → if score < 85 → improve → re-score → loop (max 4 passes, early-stop after 2 with no progress) → keep best
-```
-
-The improve pass is a **combined** score+improve call that returns both the new score AND the rewritten resume in one round-trip, halving latency vs. naive sequential calls. When score < 80, the prompt switches to "diagnose-then-fix" mode with a 10-item ATS failure-mode checklist.
-
-**Frontend** — Vanilla JS with localStorage persistence. No build step. Per-provider keys/models/base URLs stored as separate maps so switching providers doesn't wipe other credentials.
+**Frontend** — Vanilla JS with per-user localStorage persistence (synced to the server for keys/models/prefs). No build step.
 
 ## API Routes
 
@@ -168,26 +154,14 @@ The improve pass is a **combined** score+improve call that returns both the new 
 | POST | `/api/admin/login` | Admin login (fixed credentials) → admin token |
 | GET / POST | `/api/admin/users` | List / create users (admin token) |
 | DELETE | `/api/admin/users/<email>` | Delete a user and all their resumes (admin token) |
+| GET / POST | `/api/settings` | Load / save the user's provider keys, models, and prefs |
 | GET / POST | `/api/resumes` | List / save the signed-in user's private resumes |
 | GET / DELETE | `/api/resumes/<id>` | Fetch / delete one of the user's resumes |
-| POST | `/api/tailor` | Tailor a resume (requires user token) — returns `{data, ats}` |
-| POST | `/api/jd-keywords` | Preview the keywords the ATS will score against (requires user token) |
-| POST | `/api/scrape-jd` | Scrape a JD from a URL via Apify (requires user token) |
+| POST | `/api/tailor` | Tailor a resume (requires user token) — returns `{data, job_meta}` |
 | POST | `/api/answer-questions` | Generate Q&A answers from JD + tailored resume (requires user token) |
 | POST | `/api/download-pdf` | Render a tailored resume JSON as PDF (requires user token) |
 
-All `/api/*` routes except `/api/login` and `/api/admin/login` require a valid `Authorization: Bearer <token>` header. The frontend attaches this automatically and redirects to `/login` on a `401`.
-
-## Tunables
-
-These constants at the top of the ATS section in `app.py` are safe to edit:
-
-```python
-ATS_TARGET_SCORE = 85          # auto-fix loop runs until score >= this
-ATS_FLOOR_SCORE = 80           # below this, switch to aggressive mistake-diagnosis mode
-ATS_MAX_IMPROVE_PASSES = 4     # cap on rewrite attempts
-ATS_NO_PROGRESS_STOP = 2       # bail out after N consecutive passes with no score gain
-```
+All `/api/*` routes except `/api/login` and `/api/admin/login` require a valid `Authorization: Bearer <token>` header. The frontend attaches this automatically and redirects to `/login` only on a session-expiry `401`.
 
 Bump `ATS_MAX_IMPROVE_PASSES` higher if you want it to grind harder; lower `ATS_NO_PROGRESS_STOP` to fail faster on hopeless cases.
 
