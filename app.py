@@ -135,6 +135,49 @@ def _extract_paragraph_text_with_links(paragraph) -> str:
     return result if result else paragraph.text.strip()
 
 
+# Phone matcher covering (123) 456-7890, 123-456-7890, +1 234 567 8900, 123.456.7890, etc.
+_PHONE_RE = re.compile(r"(?:\+?\d[\d\-.\s()]{7,}\d)")
+
+# Words that mean a line is education/other content, NOT contact info.
+_NON_CONTACT_MARKERS = (
+    "university", "college", "institute", "bachelor", "master", "m.s.", "b.s.",
+    "ph.d", "phd", "mba", "b.a.", "m.a.", "b.tech", "m.tech", "degree", "gpa",
+    "diploma", "certification", "certificate", "coursework", "major",
+)
+
+
+def _is_contact_fragment(text: str) -> bool:
+    """True if a header line is real contact info (email/phone/URL/social/location),
+    and NOT an education line or other prose."""
+    t = (text or "").strip()
+    if not t:
+        return False
+    low = t.lower()
+    # Reject education / degree lines outright (these leak in from header tables).
+    if any(m in low for m in _NON_CONTACT_MARKERS):
+        return False
+    if "@" in t or "http" in low or "linkedin" in low or "github" in low or "portfolio" in low:
+        return True
+    if _PHONE_RE.search(t):
+        return True
+    # A short "City, ST" / "City, Country" location line.
+    if len(t) < 45 and re.search(r",\s*[A-Za-z]{2,}\.?\s*$", t):
+        return True
+    return False
+
+
+def _fix_contact_urls(text: str) -> str:
+    """Repair mangled URLs in a contact string (missing scheme slash, stray leading slash)."""
+    if not text:
+        return text
+    # "https:/x" -> "https://x" (single-slash scheme)
+    text = re.sub(r"\bhttps:/(?!/)", "https://", text)
+    text = re.sub(r"\bhttp:/(?!/)", "http://", text)
+    # Stray leading slash before a bare domain: "/www.linkedin.com" -> "www.linkedin.com"
+    text = re.sub(r"(^|[\s|(])/(www\.|linkedin\.|github\.)", r"\1\2", text)
+    return text
+
+
 def extract_personal_info_docx(file_bytes: bytes) -> dict:
     """Extract name, contact details from DOCX tables/headers before AI touches it."""
     from docx import Document
@@ -158,8 +201,9 @@ def extract_personal_info_docx(file_bytes: bytes) -> dict:
                         # Title style = candidate name
                         if style == "Title" and not info["name"]:
                             info["name"] = text
-                        # Build contact from non-title, non-subtitle paragraphs
-                        elif style not in ("Title", "Subtitle") and text:
+                        # Build contact ONLY from real contact fragments — this keeps
+                        # education/degree lines that live in the header table out of it.
+                        elif style not in ("Title", "Subtitle") and _is_contact_fragment(text):
                             if info["contact"]:
                                 info["contact"] += " | " + text
                             else:
@@ -167,9 +211,10 @@ def extract_personal_info_docx(file_bytes: bytes) -> dict:
             # Only check the first table (header table)
             break
 
-    # Clean up contact: collapse whitespace, normalize separators
+    # Clean up contact: collapse whitespace, normalize separators, repair URLs.
     if info["contact"]:
         info["contact"] = re.sub(r"\s+", " ", info["contact"]).strip()
+        info["contact"] = _fix_contact_urls(info["contact"])
 
     return info
 
@@ -185,28 +230,15 @@ def extract_personal_info_text(resume_text: str) -> dict:
     info = {"name": "", "contact": ""}
     contact_parts = []
 
-    # Broad phone matcher: (123) 456-7890, 123-456-7890, +1 234 567 8900, 123.456.7890, etc.
-    phone_re = re.compile(r"(?:\+?\d[\d\-.\s()]{7,}\d)")
-
-    def _is_contactish(text: str) -> bool:
-        low = text.lower()
-        if any(ind in low for ind in ["@", "http", "linkedin", "github", "|", "twitter", "portfolio"]):
-            return True
-        if phone_re.search(text):
-            return True
-        return False
-
     for i, line in enumerate(non_empty):
         # First non-empty line is usually the name (unless it's clearly contact info).
-        if i == 0 and not _is_contactish(line):
+        if i == 0 and not _is_contact_fragment(line):
             info["name"] = line.strip()
             continue
 
-        # Collect contact-like lines (email, phone, URL, social handles, pipe-separated blocks).
-        if _is_contactish(line):
-            contact_parts.append(line.strip())
-        elif i <= 3 and re.match(r"^[A-Za-z .'\-]+,\s*[A-Za-z]{2,}\.?$", line):
-            # A standalone location line like "San Diego, CA" or "London, UK".
+        # Collect ONLY real contact fragments (email, phone, URL, social, location).
+        # _is_contact_fragment rejects education/degree lines so they don't leak in.
+        if _is_contact_fragment(line):
             contact_parts.append(line.strip())
 
     if contact_parts:
@@ -221,7 +253,7 @@ def extract_personal_info_text(resume_text: str) -> dict:
         raw_contact = re.sub(r"\s{2,}", " ", raw_contact)
         # Collapse multiple pipes
         raw_contact = re.sub(r"\|\s*\|", "|", raw_contact)
-        info["contact"] = raw_contact.strip()
+        info["contact"] = _fix_contact_urls(raw_contact.strip())
 
     # Also clean name
     if info["name"]:
@@ -482,6 +514,8 @@ FOLLOW THESE RULES WITH ZERO EXCEPTIONS:
 
 3.8 — EDUCATION & CERTIFICATIONS
     - Keep education section brief
+    - Keep the FULL degree INCLUDING the field of study / major exactly as it appears anywhere
+      in the resume — e.g. "Master of Science in Computer Science", NOT just "Master of Science"
     - If candidate has relevant certifications (AWS, Azure, etc.), ensure they're visible
     - If JD mentions specific certifications, and candidate has them, HIGHLIGHT them
 
@@ -1242,6 +1276,50 @@ def _section_count(resume: dict) -> int:
 
 
 _BULLET_MARKERS = ("-", "*", "•", "▪", "◦", "‣", "·", "–", "—", "»", "→")
+
+# Programming languages — used to detect a bogus "Languages" section (which should list
+# SPOKEN languages, not the coding languages already in the Skills section).
+_PROGRAMMING_LANGS = {
+    "c#", "c++", "c", "javascript", "typescript", "python", "sql", "java", "go", "golang",
+    "rust", "ruby", "php", "kotlin", "swift", "scala", "r", "perl", "objective-c", "dart",
+    "html", "css", "html/css", ".net", "node.js", "node", "bash", "shell", "powershell",
+    "matlab", "assembly", "vb.net", "visual basic", "groovy", "elixir", "haskell", "lua",
+    "t-sql", "pl/sql", "json", "xml", "yaml",
+}
+
+
+def _strip_bogus_language_section(resume: dict) -> None:
+    """Remove a standalone 'Languages' section that was wrongly filled with PROGRAMMING
+    languages (duplicating the Skills section). A real Languages section lists spoken
+    languages like English/Spanish, which we keep."""
+    secs = resume.get("sections") if isinstance(resume, dict) else None
+    if not isinstance(secs, list):
+        return
+    kept = []
+    for s in secs:
+        if (isinstance(s, dict)
+                and (s.get("heading", "") or "").strip().lower() == "languages"
+                and s.get("type") in ("simple_list", "text", "skills")):
+            def _split(val):
+                return [p.strip().lower() for p in re.split(r"[,\n;/|]| and ", val or "") if p.strip()]
+            parts = []
+            items = s.get("items")
+            if isinstance(items, list):
+                for it in items:
+                    if isinstance(it, str):
+                        parts.append(it.strip().lower())          # each list item is one language
+                    elif isinstance(it, dict):
+                        parts.extend(_split(it.get("items") or it.get("name") or it.get("category") or ""))
+            elif isinstance(s.get("content"), str):
+                parts.extend(_split(s["content"]))
+            parts = [p for p in parts if p]
+            if parts:
+                prog = sum(1 for p in parts if p in _PROGRAMMING_LANGS)
+                if prog >= max(1, (len(parts) + 1) // 2):
+                    print(f"[lang-guard] dropped bogus programming-language 'Languages' section: {parts}")
+                    continue
+        kept.append(s)
+    resume["sections"] = kept
 
 
 def _count_result_bullets(resume: dict) -> int:
@@ -2056,8 +2134,8 @@ def generate_pdf(data: dict, template: str = "modern_green") -> bytes:
     pdf.cell(0, 12, _clean_text(data.get("name", "")), align=name_align, new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
 
-    # Contact
-    contact = _clean_text(data.get("contact", ""))
+    # Contact — use multi_cell so a long contact line WRAPS instead of running off the page.
+    contact = _fix_contact_urls(_clean_text(data.get("contact", "")))
     if contact:
         pdf.set_font("Helvetica", "", 9.5)
         pdf.set_text_color(*pdf.GRAY)
@@ -2065,14 +2143,14 @@ def generate_pdf(data: dict, template: str = "modern_green") -> bytes:
         if pdf.cfg.get("contact_stacked"):
             # Each contact part on its own line, no separator (mirrors the minimal_clean layout).
             for part in contact_parts:
-                pdf.cell(0, 5, part, align=contact_align, new_x="LMARGIN", new_y="NEXT")
+                pdf.multi_cell(0, 5, part, align=contact_align, new_x="LMARGIN", new_y="NEXT")
         else:
             url_parts = [p for p in contact_parts if "http" in p or "linkedin" in p.lower() or "github" in p.lower()]
             non_url_parts = [p for p in contact_parts if p not in url_parts]
             if non_url_parts:
-                pdf.cell(0, 5, " | ".join(non_url_parts), align=contact_align, new_x="LMARGIN", new_y="NEXT")
+                pdf.multi_cell(0, 5, " | ".join(non_url_parts), align=contact_align, new_x="LMARGIN", new_y="NEXT")
             for url in url_parts:
-                pdf.cell(0, 5, url, align=contact_align, new_x="LMARGIN", new_y="NEXT")
+                pdf.multi_cell(0, 5, url, align=contact_align, new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
 
     # Dynamic sections
@@ -2649,6 +2727,7 @@ def api_tailor():
             model=model, base_url=base_url, preserve_mode=preserve_mode,
         )
         job_meta = _pop_job_meta(result)
+        _strip_bogus_language_section(result)
 
         # Force-override personal info with original values (never let AI change these)
         if personal_info:
