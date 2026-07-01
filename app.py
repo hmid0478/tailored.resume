@@ -752,6 +752,18 @@ CRITICAL RULES:
 1. Do NOT change the candidate's title. Keep the EXACT title from the original resume.
 2. The output MUST have the SAME sections as the original resume, in the SAME order. The detected sections are: [{sections_list}].
 3. Do NOT drop, merge, or add sections. Mirror the original resume's structure exactly.
+4. TECHNOLOGY ALIGNMENT (high priority): Read EVERY technology, framework, language,
+   library, platform and tool named in the JOB DESCRIPTION (e.g. React, Angular, Vue,
+   TypeScript, Node.js, AWS, Kubernetes, PostgreSQL, etc.). For each one the candidate
+   has genuine or directly-transferable experience with, surface the JD's EXACT term
+   prominently — rewrite the SUMMARY and the relevant EXPERIENCE bullets so those
+   technologies appear there using the JD's spelling. Prefer the JD's technology names
+   over the resume's older/synonym terms when the candidate's experience supports it
+   (e.g. resume "JS frameworks" -> JD "React"; "K8s" -> "Kubernetes"). Never invent a
+   technology the candidate has no plausible experience with.
+5. JOB IDENTITY: extract the hiring COMPANY name and the JOB TITLE from the JOB
+   DESCRIPTION (not the resume). Put them in "detected_company" and "detected_job_title".
+   If one is not stated, use an empty string for it.
 
 IMPORTANT: Return ONLY the tailored resume as a JSON object with this exact structure (no change log, no interview prep — just the resume):
 
@@ -760,6 +772,8 @@ IMPORTANT: Return ONLY the tailored resume as a JSON object with this exact stru
   "name": "Candidate Name",
   "title": "EXACT title from original resume — do NOT change this",
   "contact": "Location | email",
+  "detected_company": "Hiring company from the JOB DESCRIPTION, or empty string",
+  "detected_job_title": "Job title from the JOB DESCRIPTION, or empty string",
   "sections": [
 {sections_json}
   ]
@@ -1535,6 +1549,113 @@ Return ONLY the combined JSON object."""
     return resume_json, ats
 
 
+# ─────────────────────────────────────────────
+# Deterministic ATS scoring (real keyword coverage, not an AI guess)
+# ─────────────────────────────────────────────
+
+def _resume_to_text(resume: dict) -> str:
+    """Flatten every text field of a resume JSON into one searchable string."""
+    parts: list[str] = []
+
+    def walk(v):
+        if isinstance(v, str):
+            parts.append(v)
+        elif isinstance(v, dict):
+            for vv in v.values():
+                walk(vv)
+        elif isinstance(v, list):
+            for vv in v:
+                walk(vv)
+
+    walk(resume)
+    return " ".join(parts)
+
+
+def _keyword_present(keyword: str, text: str) -> bool:
+    """True if `keyword` appears in `text`, tolerant of case and space/hyphen variants.
+
+    Handles tech tokens with punctuation (C#, C++, .NET, Node.js) via non-alphanumeric
+    boundaries rather than \b word boundaries (which mishandle '#', '+', '.').
+    """
+    kw = (keyword or "").strip()
+    if not kw:
+        return False
+    esc = re.escape(kw)
+    # Let a space OR hyphen in the keyword match either (or none): "event-driven" ~ "event driven".
+    esc = esc.replace(r"\ ", r"[\s\-]*").replace(r"\-", r"[\s\-]*")
+    pattern = r"(?<![A-Za-z0-9])" + esc + r"(?![A-Za-z0-9])"
+    try:
+        return re.search(pattern, text, re.IGNORECASE) is not None
+    except re.error:
+        return kw.lower() in text.lower()
+
+
+def score_resume_keywords(resume_json: dict, keywords: list[str]) -> dict:
+    """Deterministically score keyword coverage. Returns the ATS-report shape."""
+    text = _resume_to_text(resume_json)
+    matched, missing = [], []
+    seen = set()
+    for k in keywords:
+        kw = (k if isinstance(k, str) else (k or {}).get("keyword", "")).strip()
+        if not kw or kw.lower() in seen:
+            continue
+        seen.add(kw.lower())
+        (matched if _keyword_present(kw, text) else missing).append(kw)
+    total = len(matched) + len(missing)
+    score = round(100 * len(matched) / total) if total else 0
+    return {
+        "score": score,
+        "matched_keywords": matched,
+        "missing_keywords": missing,
+        "notes": "",
+    }
+
+
+def _pop_job_meta(resume: dict) -> dict:
+    """Pull the JD-derived company/title out of the resume dict (and remove them)."""
+    if not isinstance(resume, dict):
+        return {"company": "", "position": ""}
+    company = (resume.pop("detected_company", "") or "").strip()
+    position = (resume.pop("detected_job_title", "") or "").strip()
+    # Guard against the model echoing placeholder text.
+    if company.lower() in ("empty string", "n/a", "none", "not specified", "unknown"):
+        company = ""
+    if position.lower() in ("empty string", "n/a", "none", "not specified", "unknown"):
+        position = ""
+    return {"company": company, "position": position}
+
+
+def _get_jd_keywords_for_scoring(provider, api_key, jd_text, model, base_url) -> list[str]:
+    """Extract the JD keyword set once per tailor run (AI, with heuristic fallback)."""
+    try:
+        kws = extract_jd_keywords_ai(provider, api_key, jd_text, model=model, base_url=base_url)
+        out = [k.get("keyword", "") for k in kws if k.get("keyword")]
+        if out:
+            return out
+    except Exception as e:
+        print(f"[ats] AI keyword extraction failed ({e}); falling back to heuristic.")
+    return [k["keyword"] for k in extract_jd_keywords_heuristic(jd_text)]
+
+
+def _improvement_is_safe(before: dict, after: dict) -> bool:
+    """Reject a rewrite that dropped a section or emptied a previously-filled one."""
+    if not isinstance(after, dict):
+        return False
+    if not _has_all_sections(after, before):
+        return False
+    before_by_h = {(s.get("heading", "") or "").strip().lower(): s
+                   for s in (before.get("sections") or []) if isinstance(s, dict)}
+    after_by_h = {(s.get("heading", "") or "").strip().lower(): s
+                  for s in (after.get("sections") or []) if isinstance(s, dict)}
+    for h, bs in before_by_h.items():
+        as_ = after_by_h.get(h)
+        if not as_:
+            continue
+        if (bs.get("items") or bs.get("content")) and not (as_.get("items") or as_.get("content")):
+            return False
+    return True
+
+
 def tailor_with_ats_target(
     api_key: str,
     resume_text: str,
@@ -1546,11 +1667,15 @@ def tailor_with_ats_target(
     base_url: str | None,
     target: int = ATS_TARGET_SCORE,
     fast_mode: bool = False,
-) -> tuple[dict, dict | None]:
-    """Tailor → score → (if low) improve → re-score. Returns (final_resume_json, ats_report_or_None).
+) -> tuple[dict, dict | None, dict]:
+    """Tailor → score → (if low) improve → re-score. Returns (resume_json, ats_report_or_None, job_meta).
+
+    Scoring is DETERMINISTIC: we extract the JD's keyword set once, then literally check
+    which keywords appear in the tailored resume. The score therefore reflects real
+    coverage (and varies per JD) instead of an AI's guess. Each improve pass is fed the
+    concrete missing keywords so it surfaces them into the Summary / Experience.
 
     fast_mode=True: skip the score+improve loop entirely and return the first tailor pass.
-    Saves 1-N AI round-trips at the cost of an unverified ATS score.
 
     The ATS pass is best-effort: if it fails for any reason, we still return the tailored
     resume — ATS scoring should never block delivery of the resume itself.
@@ -1559,21 +1684,23 @@ def tailor_with_ats_target(
         api_key, resume_text, prompt_text, jd_text, provider, detected_sections,
         model=model, base_url=base_url,
     )
+    job_meta = _pop_job_meta(result)
 
     if fast_mode:
         # No ATS pass — fastest path. Score is unknown.
         return result, {"score": None, "fast_mode": True, "target": target, "floor": ATS_FLOOR_SCORE,
                         "passes": 0, "history": [], "matched_keywords": [], "missing_keywords": [],
-                        "notes": "Fast mode — ATS scoring skipped."}
+                        "notes": "Fast mode — ATS scoring skipped."}, job_meta
 
     # Snapshot of the initial tailored resume (pre-remediation) so the frontend can diff.
     initial_result = json.loads(json.dumps(result))
 
     ats: dict | None = None
     try:
-        ats = score_resume_ats(provider, api_key, result, jd_text, model=model, base_url=base_url)
+        keyword_list = _get_jd_keywords_for_scoring(provider, api_key, jd_text, model, base_url)
+        ats = score_resume_keywords(result, keyword_list)
         history = [ats["score"]]
-        initial_ats = json.loads(json.dumps(ats))
+        initial_score = ats["score"]
         # Keep the best result we've seen — if a remediation pass somehow makes things
         # worse, we won't ship the regression.
         best_result, best_ats = result, ats
@@ -1582,15 +1709,20 @@ def tailor_with_ats_target(
 
         while best_ats["score"] < target and passes < ATS_MAX_IMPROVE_PASSES:
             aggressive = best_ats["score"] < ATS_FLOOR_SCORE
-            # COMBINED score+improve in ONE call (saves a round-trip per pass).
-            improved, new_ats = score_and_improve_resume_ats(
-                provider, api_key, best_result, jd_text, resume_text, target, aggressive,
-                model=model, base_url=base_url,
+            # Ask the model to surface the concrete missing keywords into the resume...
+            improved = improve_resume_for_ats(
+                provider, api_key, best_result, jd_text, best_ats, resume_text, target,
+                model=model, base_url=base_url, aggressive=aggressive,
             )
-            history.append(new_ats["score"])
             passes += 1
+            # ...then re-score deterministically and only keep it if it's both safe and better.
+            if not _improvement_is_safe(best_result, improved):
+                new_ats = {"score": -1}
+            else:
+                new_ats = score_resume_keywords(improved, keyword_list)
+            history.append(max(new_ats["score"], 0))
 
-            if new_ats["score"] > best_ats["score"]:
+            if new_ats["score"] > best_ats["score"] and _improvement_is_safe(best_result, improved):
                 best_result, best_ats = improved, new_ats
                 no_progress = 0
             else:
@@ -1604,16 +1736,17 @@ def tailor_with_ats_target(
         ats["floor"] = ATS_FLOOR_SCORE
         ats["passes"] = passes
         ats["history"] = history
-        ats["initial_score"] = initial_ats.get("score")
-        # Only attach the snapshot if the remediation actually ran AND the result changed.
+        ats["initial_score"] = initial_score
+        # Only attach the snapshot if the remediation actually changed the resume.
         if passes > 0 and result is not initial_result:
             ats["initial_resume"] = initial_result
     except Exception as e:
         # Don't fail the whole request just because the scorer choked.
+        traceback.print_exc()
         ats = {"score": None, "error": str(e), "target": target, "floor": ATS_FLOOR_SCORE,
                "passes": 0, "history": [], "matched_keywords": [], "missing_keywords": [], "notes": ""}
 
-    return result, ats
+    return result, ats, job_meta
 
 
 # ─────────────────────────────────────────────
@@ -2735,6 +2868,43 @@ def api_admin_delete_user(email):
 
 
 # ─────────────────────────────────────────────
+# Per-user settings (provider keys, models, prefs)
+# ─────────────────────────────────────────────
+
+# Cap the stored settings blob so a bad client can't fill the DB.
+_MAX_SETTINGS_BYTES = 64 * 1024
+
+
+@app.route("/api/settings", methods=["GET"])
+@require_user
+def api_get_settings():
+    email = request.identity.get("email")
+    try:
+        return jsonify({"success": True, "settings": STORE.get_settings(email)})
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"Could not load settings: {e}"}), 500
+
+
+@app.route("/api/settings", methods=["POST"])
+@require_user
+def api_save_settings():
+    email = request.identity.get("email")
+    data = request.get_json(silent=True) or {}
+    settings = data.get("settings")
+    if not isinstance(settings, dict):
+        return jsonify({"error": "Invalid settings payload."}), 400
+    if len(json.dumps(settings)) > _MAX_SETTINGS_BYTES:
+        return jsonify({"error": "Settings payload too large."}), 413
+    try:
+        STORE.save_settings(email, settings)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"Could not save settings: {e}"}), 500
+    return jsonify({"success": True})
+
+
+# ─────────────────────────────────────────────
 # Per-user saved resumes
 # ─────────────────────────────────────────────
 
@@ -3006,7 +3176,7 @@ def api_tailor():
         # Extract original title from resume text (first few lines, look for a title-like line)
         original_title = _extract_original_title(resume_text)
 
-        result, ats = tailor_with_ats_target(
+        result, ats, job_meta = tailor_with_ats_target(
             api_key, resume_text, prompt_text, jd_text, provider, detected_sections,
             model=model, base_url=base_url, target=ATS_TARGET_SCORE, fast_mode=fast_mode,
         )
@@ -3022,7 +3192,7 @@ def api_tailor():
         if original_title:
             result["title"] = original_title
 
-        return jsonify({"success": True, "data": result, "ats": ats})
+        return jsonify({"success": True, "data": result, "ats": ats, "job_meta": job_meta})
 
     except ValueError as e:
         traceback.print_exc()

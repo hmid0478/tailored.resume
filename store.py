@@ -100,7 +100,24 @@ class RedisStore:
         self._cmd("DEL", f"user:{email}")
         self._cmd("SREM", "users", email)
         self._cmd("DEL", f"resumes:{email}")
+        self._cmd("DEL", f"settings:{email}")
         return existed
+
+    # ── settings (provider keys, models, prefs) ──
+    def get_settings(self, email: str) -> dict:
+        email = _norm_email(email)
+        raw = self._cmd("GET", f"settings:{email}")
+        if not raw:
+            return {}
+        try:
+            return json.loads(raw)
+        except (ValueError, TypeError):
+            return {}
+
+    def save_settings(self, email: str, settings: dict) -> dict:
+        email = _norm_email(email)
+        self._cmd("SET", f"settings:{email}", json.dumps(settings))
+        return settings
 
     # ── resumes ──
     def add_resume(self, email: str, record: dict) -> dict:
@@ -169,6 +186,7 @@ class JSONFileStore:
             data = {}
         data.setdefault("users", {})
         data.setdefault("resumes", {})
+        data.setdefault("settings", {})
         return data
 
     def _write(self, data: dict):
@@ -208,8 +226,23 @@ class JSONFileStore:
             existed = email in data["users"]
             data["users"].pop(email, None)
             data["resumes"].pop(email, None)
+            data["settings"].pop(email, None)
             self._write(data)
             return existed
+
+    # ── settings (provider keys, models, prefs) ──
+    def get_settings(self, email: str) -> dict:
+        email = _norm_email(email)
+        with self._lock:
+            return self._read()["settings"].get(email, {})
+
+    def save_settings(self, email: str, settings: dict) -> dict:
+        email = _norm_email(email)
+        with self._lock:
+            data = self._read()
+            data["settings"][email] = settings
+            self._write(data)
+        return settings
 
     # ── resumes ──
     def add_resume(self, email: str, record: dict) -> dict:

@@ -68,10 +68,6 @@
           <label for="base-url">Base URL</label>
           <input type="text" id="base-url" placeholder="http://localhost:1234/v1" autocomplete="off" />
         </div>
-        <div class="api-key-group">
-          <label for="apify-key">Apify API Token <span class="label-hint">(for URL scraping)</span></label>
-          <input type="password" id="apify-key" placeholder="apify_api_..." autocomplete="off" />
-        </div>
       </div>
 
       <!-- ═══════════════════════════════════════════
@@ -140,12 +136,7 @@
       <div class="jd-section">
         <div class="input-card jd-card">
           <h3><span class="icon">3</span> Job Description <span class="jd-badge">Changes each application</span></h3>
-          <div class="jd-url-row">
-            <input type="url" id="jd-url" class="jd-url-input" placeholder="https://www.linkedin.com/jobs/view/..." />
-            <button type="button" class="btn btn-scrape" id="scrape-btn">Scrape JD</button>
-          </div>
-          <div class="scrape-status" id="scrape-status"></div>
-          <textarea id="jd-text" rows="10" placeholder="Paste the full job description here — or enter a URL above and click Scrape JD.&#10;&#10;This is the only thing you need to change for each new application."></textarea>
+          <textarea id="jd-text" rows="10" placeholder="Paste the full job description here.&#10;&#10;This is the only thing you need to change for each new application."></textarea>
 
           <!-- JD keyword preview -->
           <div class="kw-preview-row">

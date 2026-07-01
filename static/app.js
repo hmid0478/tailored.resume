@@ -30,8 +30,9 @@ async function authFetch(url, opts = {}) {
 let tailoredData = null;
 let currentResumeId = null;  // server id of the resume currently in the preview
 let savedJDText = "";  // Preserved JD context for Q&A
-let scrapedMetadata = null;  // Metadata from last URL scrape
+let scrapedMetadata = null;  // (legacy) metadata holder — kept null now that scraping is gone
 let lastAtsReport = null;     // Most recent ATS score report
+let lastJobMeta = { company: "", position: "" };  // Company/title extracted from the JD
 
 // ── LocalStorage persistence ──
 const STORAGE_KEYS = {
@@ -56,7 +57,27 @@ const STORAGE_KEYS = {
   fastMode: "rt_fast_mode",
   dlCompany: "rt_dl_company",
   dlTitle: "rt_dl_title",
+  jobMeta: "rt_job_meta",
 };
+
+// Job identity (company + job title) extracted from the JD, used for auto-naming.
+function normalizeJobMeta(meta) {
+  meta = meta || {};
+  return { company: (meta.company || "").trim(), position: (meta.position || "").trim() };
+}
+
+// Push the JD-derived company/title into the download filename fields, unless the
+// user has manually typed something there. Empty-field rules are handled by
+// buildResumeFilename (company only / title only / blank).
+function applyJobMetaToFilenameFields() {
+  if (dlCompanyInput && dlCompanyInput.dataset.userEdited !== "1") {
+    dlCompanyInput.value = lastJobMeta.company || "";
+  }
+  if (dlTitleInput && dlTitleInput.dataset.userEdited !== "1") {
+    dlTitleInput.value = lastJobMeta.position || "";
+  }
+  _updateFilenamePreview();
+}
 
 // Provider metadata: default model, key placeholder, whether base_url is shown.
 const PROVIDER_META = {
@@ -322,6 +343,7 @@ function updateProviderUI() {
 providerSelect.addEventListener("change", () => {
   saveToStorage(STORAGE_KEYS.provider, providerSelect.value);
   updateProviderUI();
+  pushSettingsToServer();
 });
 
 function getActiveApiKey() { return keyInput.value.trim(); }
@@ -332,21 +354,18 @@ function getActiveProvider() { return providerSelect.value; }
 // ── Auto-save text inputs ──
 keyInput.addEventListener("input", () => {
   setProviderMap(STORAGE_KEYS.providerKeys, providerSelect.value, keyInput.value);
+  pushSettingsToServer();
 });
 modelInput.addEventListener("input", () => {
   setProviderMap(STORAGE_KEYS.providerModels, providerSelect.value, modelInput.value);
+  pushSettingsToServer();
 });
 baseUrlInput.addEventListener("input", () => {
   setProviderMap(STORAGE_KEYS.providerBaseUrls, providerSelect.value, baseUrlInput.value);
-});
-document.getElementById("apify-key").addEventListener("input", (e) => {
-  saveToStorage(STORAGE_KEYS.apifyKey, e.target.value);
+  pushSettingsToServer();
 });
 document.getElementById("jd-text").addEventListener("input", (e) => {
   saveToStorage(STORAGE_KEYS.jd, e.target.value);
-});
-document.getElementById("jd-url").addEventListener("input", (e) => {
-  saveToStorage(STORAGE_KEYS.jdUrl, e.target.value);
 });
 document.getElementById("prompt-text").addEventListener("input", (e) => {
   saveToStorage(STORAGE_KEYS.promptText, e.target.value);
@@ -470,9 +489,12 @@ form.addEventListener("submit", async (e) => {
     tailoredData = json.data;
     savedJDText = jd;
     lastAtsReport = json.ats || null;
+    lastJobMeta = normalizeJobMeta(json.job_meta);
     saveToStorage(STORAGE_KEYS.tailoredData, tailoredData);
     saveToStorage(STORAGE_KEYS.savedJD, savedJDText);
     saveToStorage(STORAGE_KEYS.ats, lastAtsReport);
+    saveToStorage(STORAGE_KEYS.jobMeta, lastJobMeta);
+    applyJobMetaToFilenameFields();
     renderResults(tailoredData);
     renderAtsPanel(lastAtsReport);
     resultsSection.classList.add("active");
@@ -481,17 +503,15 @@ form.addEventListener("submit", async (e) => {
     currentResumeId = null;
     saveResumeToServer(jd);
 
-    // Auto-add tracker entry
-    const jdUrl = document.getElementById("jd-url").value.trim();
+    // Auto-add tracker entry (company/role come from the JD now)
     const trackerEntry = {
-      platform: (scrapedMetadata && scrapedMetadata.platform) || detectPlatformFromUrl(jdUrl) || "Manual",
-      company: (scrapedMetadata && scrapedMetadata.company) || "",
-      position: (scrapedMetadata && scrapedMetadata.position) || (tailoredData && tailoredData.title) || "",
-      url: (scrapedMetadata && scrapedMetadata.url) || jdUrl || "",
+      platform: "Manual",
+      company: lastJobMeta.company || "",
+      position: lastJobMeta.position || (tailoredData && tailoredData.title) || "",
+      url: "",
       status: "Applied",
     };
     addTrackerEntry(trackerEntry);
-    scrapedMetadata = null;  // Reset for next use
 
     setTimeout(() => {
       resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -928,14 +948,13 @@ _wireFilenameField(dlCompanyInput, STORAGE_KEYS.dlCompany);
 _wireFilenameField(dlTitleInput, STORAGE_KEYS.dlTitle);
 
 function refreshFilenameInput() {
-  // Auto-fill only when the user hasn't typed anything manually.
+  // Auto-fill from the JD-derived company/title, only when the user hasn't typed
+  // anything manually. Empty stays empty (user fills it in).
   if (dlCompanyInput && dlCompanyInput.dataset.userEdited !== "1") {
-    const v = _autoCompanyName();
-    if (v) dlCompanyInput.value = v;
+    dlCompanyInput.value = lastJobMeta.company || _autoCompanyName() || "";
   }
   if (dlTitleInput && dlTitleInput.dataset.userEdited !== "1") {
-    const v = (tailoredData && tailoredData.title) || "";
-    if (v) dlTitleInput.value = v;
+    dlTitleInput.value = lastJobMeta.position || "";
   }
   _updateFilenamePreview();
 }
@@ -1343,88 +1362,6 @@ async function previewKeywords(useAi) {
 document.getElementById("kw-preview-btn").addEventListener("click", () => previewKeywords(false));
 document.getElementById("kw-preview-ai-btn").addEventListener("click", () => previewKeywords(true));
 
-// ── JD URL Scraping ──
-const scrapeBtn = document.getElementById("scrape-btn");
-const scrapeStatus = document.getElementById("scrape-status");
-
-function detectPlatformFromUrl(url) {
-  const platforms = {
-    "linkedin.com": "LinkedIn",
-    "indeed.com": "Indeed",
-    "glassdoor.com": "Glassdoor",
-    "ziprecruiter.com": "ZipRecruiter",
-    "monster.com": "Monster",
-    "dice.com": "Dice",
-    "lever.co": "Lever",
-    "greenhouse.io": "Greenhouse",
-    "workday.com": "Workday",
-    "myworkdayjobs.com": "Workday",
-    "smartrecruiters.com": "SmartRecruiters",
-    "angel.co": "AngelList",
-    "wellfound.com": "Wellfound",
-    "builtin.com": "Built In",
-    "simplyhired.com": "SimplyHired",
-    "careerbuilder.com": "CareerBuilder",
-    "welcometothejungle.com": "Welcome to the Jungle",
-  };
-  try {
-    const domain = new URL(url).hostname.toLowerCase().replace("www.", "");
-    for (const [key, name] of Object.entries(platforms)) {
-      if (domain.includes(key)) return name;
-    }
-  } catch {}
-  return "Other";
-}
-
-scrapeBtn.addEventListener("click", async () => {
-  const apifyKey = document.getElementById("apify-key").value.trim();
-  const jdUrl = document.getElementById("jd-url").value.trim();
-
-  if (!apifyKey) return showError("Please enter your Apify API token above.");
-  if (!jdUrl) return showError("Please enter a job posting URL.");
-
-  try {
-    new URL(jdUrl);
-  } catch {
-    return showError("Please enter a valid URL (e.g. https://...).");
-  }
-
-  scrapeBtn.disabled = true;
-  scrapeBtn.textContent = "Scraping...";
-  scrapeStatus.textContent = "Crawling page with Apify (this may take 30-60s)...";
-  scrapeStatus.className = "scrape-status loading";
-
-  try {
-    const res = await authFetch("/api/scrape-jd", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ apify_token: apifyKey, url: jdUrl }),
-    });
-
-    const json = await res.json();
-
-    if (!res.ok || json.error) {
-      throw new Error(json.error || "Scraping failed.");
-    }
-
-    // Populate JD textarea
-    document.getElementById("jd-text").value = json.text;
-    saveToStorage(STORAGE_KEYS.jd, json.text);
-
-    // Store scraped metadata
-    scrapedMetadata = json.metadata || {};
-    scrapeStatus.textContent = `Scraped successfully — ${scrapedMetadata.platform || "Unknown platform"}`;
-    scrapeStatus.className = "scrape-status success";
-  } catch (err) {
-    scrapeStatus.textContent = err.message;
-    scrapeStatus.className = "scrape-status error";
-    showError(err.message);
-  } finally {
-    scrapeBtn.disabled = false;
-    scrapeBtn.textContent = "Scrape JD";
-  }
-});
-
 // ── Job Application Tracker ──
 const trackerTbody = document.getElementById("tracker-tbody");
 const trackerEmpty = document.getElementById("tracker-empty");
@@ -1623,17 +1560,62 @@ trackerClearBtn.addEventListener("click", () => {
   }
 })();
 
+// ── Server-side settings sync (per-user provider keys / models / prefs) ──
+// Keys are stored against the user's account so they follow them across devices
+// and are never visible to other users. localStorage is just a fast local cache.
+function collectSettings() {
+  return {
+    provider: loadFromStorage(STORAGE_KEYS.provider) || (providerSelect && providerSelect.value) || "",
+    providerKeys: getProviderMap(STORAGE_KEYS.providerKeys),
+    providerModels: getProviderMap(STORAGE_KEYS.providerModels),
+    providerBaseUrls: getProviderMap(STORAGE_KEYS.providerBaseUrls),
+    fastMode: loadFromStorage(STORAGE_KEYS.fastMode) || "0",
+    pdfTemplate: loadFromStorage(STORAGE_KEYS.pdfTemplate) || "",
+  };
+}
+
+let _settingsPushTimer = null;
+function pushSettingsToServer() {
+  clearTimeout(_settingsPushTimer);
+  _settingsPushTimer = setTimeout(async () => {
+    try {
+      await authFetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ settings: collectSettings() }),
+      });
+    } catch (err) {
+      console.warn("Could not save settings:", err.message);
+    }
+  }, 700);
+}
+
+async function pullSettingsFromServer() {
+  try {
+    const res = await authFetch("/api/settings");
+    const json = await res.json();
+    if (!res.ok || !json.settings) return;
+    const s = json.settings;
+    // Merge provider maps: keep anything already local, fill gaps from the server.
+    ["providerKeys", "providerModels", "providerBaseUrls"].forEach((mapName) => {
+      if (s[mapName] && typeof s[mapName] === "object") {
+        const merged = Object.assign({}, s[mapName], getProviderMap(STORAGE_KEYS[mapName]));
+        saveToStorage(STORAGE_KEYS[mapName], merged);
+      }
+    });
+    // Scalar prefs: only adopt the server value if nothing is set locally yet.
+    if (s.provider && !loadFromStorage(STORAGE_KEYS.provider)) saveToStorage(STORAGE_KEYS.provider, s.provider);
+    if (s.pdfTemplate && !loadFromStorage(STORAGE_KEYS.pdfTemplate)) saveToStorage(STORAGE_KEYS.pdfTemplate, s.pdfTemplate);
+    if (s.fastMode != null && loadFromStorage(STORAGE_KEYS.fastMode) == null) saveToStorage(STORAGE_KEYS.fastMode, s.fastMode);
+  } catch (err) {
+    console.warn("Could not load settings:", err.message);
+  }
+}
+
 // ── My Resumes (per-user, server-side) ──
 const savedListEl = document.getElementById("saved-list");
 const savedEmptyEl = document.getElementById("saved-empty");
 const savedCountEl = document.getElementById("saved-count");
-
-function _resumeCompanyGuess() {
-  if (scrapedMetadata && scrapedMetadata.company) return scrapedMetadata.company;
-  const c = (dlCompanyInput && dlCompanyInput.value || "").trim();
-  if (c) return c;
-  return _autoCompanyName();
-}
 
 async function saveResumeToServer(jd) {
   if (!tailoredData) return;
@@ -1643,8 +1625,9 @@ async function saveResumeToServer(jd) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         name: tailoredData.name || "",
-        title: tailoredData.title || "",
-        company: _resumeCompanyGuess(),
+        // Label the saved resume by the JD's job title + company.
+        title: lastJobMeta.position || tailoredData.title || "",
+        company: lastJobMeta.company || (dlCompanyInput && dlCompanyInput.value.trim()) || "",
         jd: jd || savedJDText || "",
         data: tailoredData,
         ats: lastAtsReport || null,
@@ -1727,12 +1710,18 @@ async function openSavedResume(id) {
     tailoredData = rec.data || null;
     savedJDText = rec.jd || "";
     lastAtsReport = rec.ats || null;
+    lastJobMeta = normalizeJobMeta({ company: rec.company, position: rec.title });
     currentResumeId = id;
     if (!tailoredData) throw new Error("This saved resume has no data.");
+
+    // Opening a saved resume replaces the auto-filled filename fields.
+    if (dlCompanyInput) dlCompanyInput.dataset.userEdited = "";
+    if (dlTitleInput) dlTitleInput.dataset.userEdited = "";
 
     saveToStorage(STORAGE_KEYS.tailoredData, tailoredData);
     saveToStorage(STORAGE_KEYS.savedJD, savedJDText);
     saveToStorage(STORAGE_KEYS.ats, lastAtsReport);
+    saveToStorage(STORAGE_KEYS.jobMeta, lastJobMeta);
 
     renderResults(tailoredData);
     renderAtsPanel(lastAtsReport);
@@ -1788,14 +1777,14 @@ function migrateOldKeys() {
 function restoreState() {
   migrateOldKeys();
 
-  const savedApifyKey = loadFromStorage(STORAGE_KEYS.apifyKey);
   const savedProvider = loadFromStorage(STORAGE_KEYS.provider);
   const savedJD = loadFromStorage(STORAGE_KEYS.jd);
-  const savedJdUrl = loadFromStorage(STORAGE_KEYS.jdUrl);
   const savedPrompt = loadFromStorage(STORAGE_KEYS.promptText);
   const savedTailored = loadJSONFromStorage(STORAGE_KEYS.tailoredData);
   const savedJDContext = loadFromStorage(STORAGE_KEYS.savedJD);
   const savedPromptMode = loadFromStorage(STORAGE_KEYS.promptMode);
+  const savedJobMeta = loadJSONFromStorage(STORAGE_KEYS.jobMeta);
+  if (savedJobMeta) lastJobMeta = normalizeJobMeta(savedJobMeta);
 
   if (savedProvider && PROVIDER_META[savedProvider]) providerSelect.value = savedProvider;
   updateProviderUI();   // Loads key/model/base_url for the active provider
@@ -1804,9 +1793,7 @@ function restoreState() {
   const savedLinkedin = loadFromStorage("rt_linkedin_url");
   if (savedLinkedin) document.getElementById("linkedin-url").value = savedLinkedin;
 
-  if (savedApifyKey) document.getElementById("apify-key").value = savedApifyKey;
   if (savedJD) document.getElementById("jd-text").value = savedJD;
-  if (savedJdUrl) document.getElementById("jd-url").value = savedJdUrl;
   if (savedPrompt) document.getElementById("prompt-text").value = savedPrompt;
 
   // Fast mode toggle
@@ -1815,6 +1802,7 @@ function restoreState() {
     fastBox.checked = loadFromStorage(STORAGE_KEYS.fastMode) === "1";
     fastBox.addEventListener("change", () => {
       saveToStorage(STORAGE_KEYS.fastMode, fastBox.checked ? "1" : "0");
+      pushSettingsToServer();
     });
   }
 
@@ -1846,6 +1834,7 @@ function restoreState() {
     if (savedTemplate) templateSelect.value = savedTemplate;
     templateSelect.addEventListener("change", () => {
       saveToStorage(STORAGE_KEYS.pdfTemplate, templateSelect.value);
+      pushSettingsToServer();
     });
   }
 
@@ -1869,4 +1858,9 @@ function restoreState() {
   loadMyResumes();
 }
 
-restoreState();
+// Boot: pull the user's saved settings (API keys, model, prefs) from the server
+// FIRST so restoreState() sees them, then render everything.
+(async function initApp() {
+  await pullSettingsFromServer();
+  restoreState();
+})();

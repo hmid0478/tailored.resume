@@ -16,8 +16,9 @@ Multi-provider: works with **Anthropic Claude**, **Google Gemini**, **OpenAI**, 
 
 ## Features
 
-- **Multi-provider AI** — Anthropic, Gemini, OpenAI, OpenRouter, Groq, Together AI, Ollama, and any OpenAI-compatible base URL. Keys, models, and base URLs persist per-provider.
-- **ATS scoring + auto-fix loop** — every tailoring is verified to ≥85% coverage; aggressive remediation kicks in when scores drop below 80%.
+- **Accounts & admin portal** — private app behind a login. A separate admin portal (`/admin`) creates/deletes users. Each user's data (resumes, settings, keys) is isolated to their account. See [Authentication & Multi-User](#authentication--multi-user).
+- **Multi-provider AI** — Anthropic, Gemini, OpenAI, OpenRouter, Groq, Together AI, Ollama, and any OpenAI-compatible base URL. Keys, models, and base URLs are stored **per-user on the server**, so they follow the account across devices and never need re-entering.
+- **Deterministic ATS scoring + tech injection** — extracts every technology/keyword from the JD, then literally checks which appear in the tailored resume (real, per-JD coverage — not an AI guess). The auto-fix loop surfaces the missing technologies into the Summary and Experience bullets until it hits ≥85%.
 - **Resume-section-loss guard** — if any AI pass returns a resume with fewer sections than the input, it's rejected and the previous version is kept.
 - **JSON repair** — 3-tier fallback (lightweight repair → `json-repair` library → raw dump) so transient LLM JSON quirks (unterminated strings, unquoted keys, single quotes, missing commas) self-heal.
 - **JD keyword preview** — free heuristic mode (regex, no AI cost) or AI-extracted mode shows the 25–50 keywords the ATS will score against, before you spend tokens.
@@ -25,10 +26,9 @@ Multi-provider: works with **Anthropic Claude**, **Google Gemini**, **OpenAI**, 
 - **Per-section density heatmap** — JD keywords highlighted inline in the preview with a hit-count badge per section.
 - **Fast mode** — checkbox next to the Tailor button skips the score+improve loop for a single AI call (3–6× faster).
 - **4 PDF templates** — Minimal Clean (default), Modern Green, Classic Blue, Universal. All ATS-safe (Helvetica, single column, no tables/images).
-- **Filename builder** — Company name + Job title fields directly next to the Download PDF button. Filename auto-builds as `{company} - {title}.pdf`. Auto-fills from scraped JD metadata; persists across reloads.
+- **Auto-naming from the JD** — the tailor step reads the hiring company and job title from the job description and auto-fills the Company / Job title fields (filename becomes `{company} - {title}.pdf`). If only one is present it uses that; if neither, the fields stay blank for you to type.
 - **Application Q&A** — generates first-person answers to job application questions using your tailored resume + JD as context.
-- **JD scraping** — paste a job posting URL (LinkedIn, Indeed, Glassdoor, Lever, Greenhouse, Workday, etc.) and auto-extract the description via Apify.
-- **Job application tracker** — built-in CRUD table tracks every application (date, platform, company, role, status, link). Exportable to clipboard for Excel.
+- **Job application tracker** — built-in CRUD table tracks every application (date, company, role, status). Exportable to clipboard for Excel.
 - **Quick-copy LinkedIn bar** — one-click copy of your LinkedIn URL at the top.
 - **Persistent state** — every input (API keys, resume, prompt, JD, fast-mode toggle, template choice, company/title fields, ATS report, score history, scratch state) is saved to localStorage and restored on reload.
 - **Robust error handling** — auto-retry on transient provider 5xx errors with exponential backoff (1.5s → 4s → 9s); friendly messages for invalid keys, exhausted quotas, and overloaded models.
@@ -40,7 +40,6 @@ Multi-provider: works with **Anthropic Claude**, **Google Gemini**, **OpenAI**, 
 
 - Python 3.9+ (tested on 3.11)
 - An API key for at least one provider (links below)
-- (Optional) [Apify API token](https://console.apify.com/) for URL-based JD scraping
 
 ### Get an API key
 
@@ -89,14 +88,11 @@ In the "Your Profile" section, upload `.docx`, `.pdf`, or `.txt`. Once uploaded 
 
 ### 3. Add a job description
 
-- Paste the JD into the textarea, **or**
-- Paste a URL into the input above and click **Scrape JD** (needs an Apify token).
-
-Optionally click **Preview keywords (free)** under the JD to see what the ATS will score against — no API call.
+Paste the JD into the textarea. Optionally click **Preview keywords (free)** under the JD to see what the ATS will score against — no API call.
 
 ### 4. (Optional) Fill Company name + Job title
 
-These two fields next to the Download PDF button drive the filename: `{company} - {title}.pdf`. They auto-fill from scraped JD metadata once you tailor.
+These two fields next to the Download PDF button drive the filename: `{company} - {title}.pdf`. They **auto-fill from the job description** when you tailor (company + job title read straight from the JD); edit them if you want.
 
 ### 5. Tailor
 
