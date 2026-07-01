@@ -40,7 +40,12 @@
       <p>Upload your resume & prompt once. Just change the JD for each application.</p>
     </header>
 
-    <form id="tailor-form">
+    <form id="tailor-form" autocomplete="off">
+      <!-- Off-screen decoys absorb the browser's autofill so the Model / API Key fields
+           don't get filled with your saved login email. -->
+      <input type="text" name="username" tabindex="-1" aria-hidden="true" autocomplete="username" class="autofill-decoy" />
+      <input type="password" name="password" tabindex="-1" aria-hidden="true" autocomplete="current-password" class="autofill-decoy" />
+
       <!-- API Keys -->
       <div class="api-key-row">
         <div class="api-key-group api-key-group-provider">
@@ -58,11 +63,11 @@
         </div>
         <div class="api-key-group">
           <label for="ai-model">Model</label>
-          <input type="text" id="ai-model" placeholder="e.g. claude-sonnet-4-5-20250929" autocomplete="off" />
+          <input type="text" id="ai-model" name="rt_ai_model" placeholder="e.g. claude-sonnet-4-5-20250929" autocomplete="off" />
         </div>
         <div class="api-key-group" id="provider-key-group">
           <label for="provider-key" id="provider-key-label">API Key</label>
-          <input type="password" id="provider-key" placeholder="" autocomplete="off" />
+          <input type="password" id="provider-key" name="rt_provider_key" placeholder="" autocomplete="new-password" />
         </div>
         <div class="api-key-group" id="base-url-group" style="display: none;">
           <label for="base-url">Base URL</label>
