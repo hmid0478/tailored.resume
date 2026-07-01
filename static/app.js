@@ -63,6 +63,7 @@ const STORAGE_KEYS = {
   promptMode: "rt_prompt_mode",  // "upload" or "paste"
   pdfTemplate: "rt_pdf_template",
   preserveMode: "rt_preserve_mode",
+  batchJobs: "rt_batch_jobs",
   dlCompany: "rt_dl_company",
   dlTitle: "rt_dl_title",
   jobMeta: "rt_job_meta",
@@ -1130,6 +1131,146 @@ function formatSavedDate(iso) {
 const savedRefreshBtn = document.getElementById("saved-refresh-btn");
 if (savedRefreshBtn) savedRefreshBtn.addEventListener("click", loadMyResumes);
 
+// ── Batch generation (tailor + save a resume for multiple jobs) ──
+const batchList = document.getElementById("batch-list");
+const batchGenerateBtn = document.getElementById("batch-generate-btn");
+const batchProgress = document.getElementById("batch-progress");
+
+// Build the same FormData the single-tailor flow sends, for one JD.
+function buildTailorFormData(jd) {
+  const fd = new FormData();
+  fd.append("provider", getActiveProvider());
+  fd.append("api_key", getActiveApiKey());
+  const model = getActiveModel();
+  if (model) fd.append("model", model);
+  const baseUrl = getActiveBaseUrl();
+  if (baseUrl) fd.append("base_url", baseUrl);
+  if (document.getElementById("preserve-mode-checkbox")?.checked) fd.append("preserve_mode", "1");
+  fd.append("jd", jd);
+  if (resumeFileInput.files.length) fd.append("resume_file", resumeFileInput.files[0]);
+  const promptUploadActive = document.getElementById("prompt-upload-mode").classList.contains("active");
+  const promptText = document.getElementById("prompt-text").value.trim();
+  if (promptUploadActive && promptFileInput.files.length > 0) fd.append("prompt_file", promptFileInput.files[0]);
+  else if (promptText) fd.append("prompt", promptText);
+  return fd;
+}
+
+function collectBatchJobs() {
+  return [...batchList.querySelectorAll(".batch-job")].map((c) => ({
+    company: c.querySelector(".batch-company").value.trim(),
+    title: c.querySelector(".batch-title").value.trim(),
+    jd: c.querySelector(".batch-jd").value.trim(),
+  }));
+}
+
+function saveBatchJobs() {
+  saveToStorage(STORAGE_KEYS.batchJobs, collectBatchJobs());
+}
+
+function addBatchJob(job) {
+  job = job || { company: "", title: "", jd: "" };
+  const card = document.createElement("div");
+  card.className = "batch-job";
+  card.innerHTML =
+    '<div class="batch-job-row">' +
+    '  <input class="batch-company" placeholder="Company (optional)" autocomplete="off" />' +
+    '  <input class="batch-title" placeholder="Job title (optional)" autocomplete="off" />' +
+    '  <button type="button" class="batch-remove" title="Remove job">&#x2715;</button>' +
+    '</div>' +
+    '<textarea class="batch-jd" rows="4" placeholder="Paste the job description for this job..."></textarea>' +
+    '<div class="batch-job-status"></div>';
+  card.querySelector(".batch-company").value = job.company || "";
+  card.querySelector(".batch-title").value = job.title || "";
+  card.querySelector(".batch-jd").value = job.jd || "";
+  card.querySelectorAll("input, textarea").forEach((el) => el.addEventListener("input", saveBatchJobs));
+  card.querySelector(".batch-remove").addEventListener("click", () => {
+    card.remove();
+    if (!batchList.querySelector(".batch-job")) addBatchJob();  // keep at least one card
+    saveBatchJobs();
+  });
+  batchList.appendChild(card);
+  return card;
+}
+
+function updateBatchProgress(done, failed, total) {
+  if (!total) { batchProgress.textContent = ""; return; }
+  let txt = `${done + failed}/${total} processed`;
+  if (failed) txt += ` · ${failed} failed`;
+  batchProgress.textContent = txt;
+}
+
+async function generateAllResumes() {
+  const provider = getActiveProvider();
+  const apiKey = getActiveApiKey();
+  const baseUrl = getActiveBaseUrl();
+  const meta = getProviderMeta(provider);
+  const isLocal = provider === "ollama" || (provider === "openai_compatible" && baseUrl.includes("localhost"));
+  if (!apiKey && !isLocal) return showError(`Please enter your ${meta.label} above.`);
+  if (!resumeFileInput.files.length) return showError("Please upload your resume in 'Your Profile' first.");
+
+  const cards = [...batchList.querySelectorAll(".batch-job")].filter((c) => c.querySelector(".batch-jd").value.trim());
+  if (!cards.length) return showError("Add at least one job with a job description.");
+
+  batchGenerateBtn.disabled = true;
+  batchGenerateBtn.textContent = "Generating…";
+  let done = 0, failed = 0;
+  updateBatchProgress(0, 0, cards.length);
+
+  // Sequential — each job is its own request, so nothing hits the serverless timeout.
+  for (const card of cards) {
+    const jd = card.querySelector(".batch-jd").value.trim();
+    const company = card.querySelector(".batch-company").value.trim();
+    const title = card.querySelector(".batch-title").value.trim();
+    const statusEl = card.querySelector(".batch-job-status");
+    statusEl.textContent = "Generating…";
+    statusEl.className = "batch-job-status generating";
+    try {
+      const res = await authFetch("/api/tailor", { method: "POST", body: buildTailorFormData(jd) });
+      const json = await res.json();
+      if (!res.ok || json.error) throw new Error(json.error || "Tailoring failed.");
+      const jm = normalizeJobMeta(json.job_meta);
+      const finalCompany = company || jm.company || "";
+      const finalTitle = title || jm.position || (json.data && json.data.title) || "";
+      const saveRes = await authFetch("/api/resumes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: (json.data && json.data.name) || "", title: finalTitle, company: finalCompany, jd, data: json.data }),
+      });
+      const saveJson = await saveRes.json();
+      if (!saveRes.ok || saveJson.error) throw new Error(saveJson.error || "Could not save resume.");
+      done++;
+      const label = [finalCompany, finalTitle].filter(Boolean).join(" · ");
+      statusEl.textContent = "✓ Saved" + (label ? " — " + label : "");
+      statusEl.className = "batch-job-status done";
+    } catch (err) {
+      failed++;
+      statusEl.textContent = "✗ " + err.message;
+      statusEl.className = "batch-job-status failed";
+    }
+    updateBatchProgress(done, failed, cards.length);
+  }
+
+  batchGenerateBtn.disabled = false;
+  batchGenerateBtn.textContent = "Generate all resumes";
+  loadMyResumes();  // new resumes now appear in My Resumes, ready to download
+}
+
+if (batchList) {
+  document.getElementById("batch-add-btn").addEventListener("click", () => { addBatchJob(); saveBatchJobs(); });
+  batchGenerateBtn.addEventListener("click", generateAllResumes);
+  document.getElementById("batch-header").addEventListener("click", (e) => {
+    if (e.target.closest("input, textarea, .batch-remove")) return;
+    document.getElementById("batch-section").classList.toggle("collapsed");
+  });
+}
+
+function initBatch() {
+  if (!batchList) return;
+  const saved = loadJSONFromStorage(STORAGE_KEYS.batchJobs);
+  if (Array.isArray(saved) && saved.length) saved.forEach((j) => addBatchJob(j));
+  else addBatchJob();
+}
+
 // ── Restore saved state ──
 function migrateOldKeys() {
   // Migrate from the old single-key schema to the per-provider map.
@@ -1226,6 +1367,9 @@ function restoreState() {
 
   // Load this user's private resume library from the server.
   loadMyResumes();
+
+  // Populate the batch panel (restores any jobs the user queued earlier).
+  initBatch();
 }
 
 // Boot: pull the user's saved settings (API keys, model, prefs) from the server

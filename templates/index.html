@@ -158,6 +158,27 @@
       </div>
     </form>
 
+    <!-- ═══════════════════════════════════════════
+         BATCH: generate resumes for multiple jobs
+         ═══════════════════════════════════════════ -->
+    <div class="batch-section collapsed" id="batch-section">
+      <div class="batch-header" id="batch-header">
+        <div>
+          <h2>Batch — generate resumes for multiple jobs</h2>
+          <span class="batch-subtitle">Add several jobs now, generate a tailored resume for each, then just download the right one when you apply. Uses your uploaded resume, prompt &amp; AI settings above.</span>
+        </div>
+        <button type="button" class="setup-toggle-btn" id="batch-toggle-btn"><span class="chevron" id="batch-chevron">&#9660;</span></button>
+      </div>
+      <div class="batch-body" id="batch-body">
+        <div class="batch-list" id="batch-list"></div>
+        <div class="batch-actions">
+          <button type="button" class="btn btn-secondary" id="batch-add-btn">+ Add job</button>
+          <button type="button" class="btn btn-primary" id="batch-generate-btn">Generate all resumes</button>
+          <span class="batch-progress" id="batch-progress"></span>
+        </div>
+      </div>
+    </div>
+
     <!-- Results -->
     <div class="results-section" id="results-section">
       <div class="results-header">

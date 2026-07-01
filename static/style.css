@@ -1743,3 +1743,83 @@ del.diff-removed { background: rgba(239,68,68,0.25);  color: #fca5a5; text-decor
   gap: 8px;
   align-items: flex-start;
 }
+
+/* ─────────────────────────────────────────────
+   Batch generation (multiple jobs)
+   ───────────────────────────────────────────── */
+.batch-section {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  margin-top: 24px;
+}
+.batch-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+}
+.batch-header h2 { font-size: 1.1rem; font-weight: 600; }
+.batch-subtitle { display: block; color: var(--text-muted); font-size: 0.82rem; margin-top: 4px; max-width: 70ch; }
+.batch-section.collapsed .batch-body { display: none; }
+.batch-section.collapsed #batch-chevron { transform: rotate(-90deg); }
+#batch-chevron { transition: transform 0.15s; display: inline-block; }
+
+.batch-body { margin-top: 18px; }
+.batch-list { display: flex; flex-direction: column; gap: 14px; }
+.batch-job {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+}
+.batch-job-row { display: flex; gap: 10px; margin-bottom: 10px; }
+.batch-company, .batch-title {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.88rem;
+  padding: 9px 12px;
+  font-family: inherit;
+}
+.batch-company:focus, .batch-title:focus, .batch-jd:focus {
+  outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow);
+}
+.batch-remove {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  width: 36px;
+  flex-shrink: 0;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.batch-remove:hover { color: var(--error); border-color: var(--error); }
+.batch-jd {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.88rem;
+  padding: 10px 12px;
+  font-family: inherit;
+  resize: vertical;
+}
+.batch-job-status { font-size: 0.8rem; margin-top: 8px; min-height: 1em; }
+.batch-job-status.generating { color: var(--warning); }
+.batch-job-status.done { color: var(--success); }
+.batch-job-status.failed { color: var(--error); }
+
+.batch-actions { display: flex; align-items: center; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
+.batch-progress { color: var(--text-muted); font-size: 0.85rem; }
+
+@media (max-width: 600px) {
+  .batch-job-row { flex-wrap: wrap; }
+  .batch-company, .batch-title { flex: 1 1 100%; }
+}

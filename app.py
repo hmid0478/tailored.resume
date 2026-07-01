@@ -2545,6 +2545,22 @@ def api_save_resume():
         "ats": data.get("ats") or None,
     }
     try:
+        # One resume per (company + job title): if a resume for this exact company AND
+        # title already exists, REPLACE it (reuse its id so add_resume overwrites) instead
+        # of adding a duplicate. Different titles at the same company stay as separate resumes.
+        company = record["company"].strip().lower()
+        title = record["title"].strip().lower()
+        if company or title:
+            existing = [r for r in STORE.list_resumes(email)
+                        if (r.get("company") or "").strip().lower() == company
+                        and (r.get("title") or "").strip().lower() == title]
+            if existing:
+                record["id"] = existing[0]["id"]        # overwrite the first match
+                for extra in existing[1:]:              # clean up any older duplicates
+                    try:
+                        STORE.delete_resume(email, extra["id"])
+                    except Exception:
+                        pass
         saved = STORE.add_resume(email, record)
     except Exception as e:
         traceback.print_exc()
