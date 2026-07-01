@@ -34,6 +34,37 @@
     dashView.style.display = "";
     adminWho.textContent = localStorage.getItem(EMAIL_KEY) || "";
     loadUsers();
+    loadStorageHealth();
+  }
+
+  async function loadStorageHealth() {
+    const banner = document.getElementById("storage-banner");
+    if (!banner) return;
+    try {
+      const res = await adminFetch("/api/admin/health");
+      const json = await res.json();
+      const s = (json && json.storage) || {};
+      if (s.backend === "redis" && s.reachable) {
+        banner.className = "storage-banner ok";
+        banner.textContent = "✓ Storage: Upstash Redis — users & data persist across redeploys.";
+        banner.style.display = "";
+      } else if (s.backend === "redis" && !s.reachable) {
+        banner.className = "storage-banner warn";
+        banner.textContent = "⚠ Redis is configured but not reachable — check your Upstash credentials." +
+          (s.error ? " (" + s.error + ")" : "");
+        banner.style.display = "";
+      } else if (!s.persistent) {
+        banner.className = "storage-banner warn";
+        banner.textContent = "⚠ Storage is a TEMPORARY file — users you create will be LOST on the next " +
+          "redeploy. Connect Upstash Redis in Vercel (Storage tab) and redeploy to fix this.";
+        banner.style.display = "";
+      } else {
+        banner.style.display = "none";
+      }
+    } catch (err) {
+      // Non-fatal — just don't show the banner.
+      banner.style.display = "none";
+    }
   }
 
   async function adminFetch(url, opts) {
@@ -195,7 +226,26 @@
     return div.innerHTML;
   }
 
+  // Defeat browser autofill so login/create-user boxes start empty (see login.js).
+  function hardenAgainstAutofill(ids) {
+    const els = ids.map((id) => document.getElementById(id)).filter(Boolean);
+    els.forEach((el) => {
+      el.setAttribute("readonly", "readonly");
+      const unlock = () => el.removeAttribute("readonly");
+      el.addEventListener("focus", unlock, { once: true });
+      el.addEventListener("mousedown", unlock, { once: true });
+      el.addEventListener("input", () => { el.dataset.touched = "1"; });
+    });
+    const clear = () => els.forEach((el) => {
+      if (document.activeElement !== el && el.dataset.touched !== "1") el.value = "";
+    });
+    clear();
+    setTimeout(clear, 150);
+    setTimeout(clear, 500);
+  }
+
   // ── Boot ──
+  hardenAgainstAutofill(["admin-email", "admin-password", "new-email", "new-password"]);
   if (token()) {
     showDash();
   } else {

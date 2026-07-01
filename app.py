@@ -2821,6 +2821,19 @@ def api_admin_login():
     return jsonify({"success": True, "token": token, "email": ADMIN_EMAIL})
 
 
+@app.route("/api/admin/health", methods=["GET"])
+@require_admin
+def api_admin_health():
+    """Report which storage backend is live so the admin can confirm persistence."""
+    info = STORE.describe() if hasattr(STORE, "describe") else {"backend": "unknown"}
+    try:
+        info["reachable"] = STORE.ping() if hasattr(STORE, "ping") else None
+    except Exception as e:
+        info["reachable"] = False
+        info["error"] = str(e)
+    return jsonify({"success": True, "storage": info})
+
+
 @app.route("/api/admin/users", methods=["GET"])
 @require_admin
 def api_admin_list_users():

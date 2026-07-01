@@ -17,14 +17,14 @@
 
       <div class="auth-msg" id="auth-msg"></div>
 
-      <form id="login-form">
+      <form id="login-form" autocomplete="off">
         <div class="form-group">
           <label for="email">Email</label>
-          <input type="email" id="email" autocomplete="username" placeholder="you@example.com" required />
+          <input type="email" id="email" name="rt_login_email" autocomplete="off" placeholder="you@example.com" required />
         </div>
         <div class="form-group">
           <label for="password">Password</label>
-          <input type="password" id="password" autocomplete="current-password" placeholder="Your password" required />
+          <input type="password" id="password" name="rt_login_pw" autocomplete="new-password" placeholder="Your password" required />
         </div>
         <button type="submit" class="btn btn-primary" id="login-btn">Sign in</button>
       </form>

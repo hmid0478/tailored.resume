@@ -20,14 +20,14 @@
 
       <div class="auth-msg" id="admin-login-msg"></div>
 
-      <form id="admin-login-form">
+      <form id="admin-login-form" autocomplete="off">
         <div class="form-group">
           <label for="admin-email">Admin email</label>
-          <input type="email" id="admin-email" autocomplete="username" placeholder="admin@example.com" required />
+          <input type="email" id="admin-email" name="rt_admin_email_f" autocomplete="off" placeholder="admin@example.com" required />
         </div>
         <div class="form-group">
           <label for="admin-password">Password</label>
-          <input type="password" id="admin-password" autocomplete="current-password" placeholder="Admin password" required />
+          <input type="password" id="admin-password" name="rt_admin_pw_f" autocomplete="new-password" placeholder="Admin password" required />
         </div>
         <button type="submit" class="btn btn-primary" id="admin-login-btn">Sign in as admin</button>
       </form>
@@ -46,20 +46,22 @@
       <button class="btn btn-ghost" id="admin-logout-btn">Log out</button>
     </div>
 
+    <div class="storage-banner" id="storage-banner" style="display:none;"></div>
+
     <div class="admin-grid">
       <!-- Create user -->
       <div class="panel">
         <h2>Create a user</h2>
         <p class="hint">The user signs in with this email &amp; password. Their resumes are private to them.</p>
         <div class="auth-msg" id="create-msg"></div>
-        <form id="create-user-form">
+        <form id="create-user-form" autocomplete="off">
           <div class="form-group">
             <label for="new-email">User email</label>
-            <input type="email" id="new-email" placeholder="user@example.com" required />
+            <input type="email" id="new-email" name="rt_new_user_email" autocomplete="off" placeholder="user@example.com" required />
           </div>
           <div class="form-group">
             <label for="new-password">Password <span style="opacity:.6">(min 6 chars)</span></label>
-            <input type="text" id="new-password" placeholder="Set a password" required />
+            <input type="text" id="new-password" name="rt_new_user_pw" autocomplete="off" placeholder="Set a password" required />
           </div>
           <button type="submit" class="btn btn-primary" id="create-btn">Create user</button>
         </form>

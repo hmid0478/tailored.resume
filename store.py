@@ -67,6 +67,15 @@ class RedisStore:
             raise RuntimeError(f"Upstash error: {payload['error']}")
         return payload.get("result") if isinstance(payload, dict) else None
 
+    def describe(self) -> dict:
+        return {"backend": "redis", "persistent": True}
+
+    def ping(self) -> bool:
+        try:
+            return self._cmd("PING") in ("PONG", "pong", True)
+        except Exception:
+            return False
+
     # ── users ──
     def get_user(self, email: str):
         email = _norm_email(email)
@@ -178,6 +187,15 @@ class JSONFileStore:
         if not os.path.exists(self.path):
             self._write({"users": {}, "resumes": {}})
 
+    def describe(self) -> dict:
+        # On Vercel the only writable path is /tmp, which is wiped between
+        # deployments/cold starts — so this backend is NOT persistent there.
+        persistent = not bool(os.environ.get("VERCEL"))
+        return {"backend": "file", "persistent": persistent, "path": self.path}
+
+    def ping(self) -> bool:
+        return True
+
     def _read(self) -> dict:
         try:
             with open(self.path, "r", encoding="utf-8") as f:
@@ -284,6 +302,38 @@ class JSONFileStore:
 # Backend selection
 # ─────────────────────────────────────────────
 
+def _find_redis_creds():
+    """Find an Upstash/Vercel-KV REST URL + token pair from the environment.
+
+    Vercel's Upstash & KV integrations name these differently depending on how you
+    add them (and you can even choose a custom prefix). Rather than hard-code one
+    name, we check the well-known pairs first, then fall back to scanning for ANY
+    `<PREFIX>REST_API_URL`/`<PREFIX>REST_API_TOKEN` (or `..._REDIS_REST_URL/TOKEN`)
+    pair — so it works no matter what prefix was chosen.
+    """
+    env = os.environ
+
+    known = [
+        ("UPSTASH_REDIS_REST_URL", "UPSTASH_REDIS_REST_TOKEN"),
+        ("KV_REST_API_URL", "KV_REST_API_TOKEN"),
+        ("REDIS_REST_URL", "REDIS_REST_TOKEN"),
+    ]
+    for u_name, t_name in known:
+        if env.get(u_name) and env.get(t_name):
+            return env[u_name], env[t_name]
+
+    # Generic scan: match any *REST_API_URL / *REST_API_TOKEN (or *REDIS_REST_URL/TOKEN) pair.
+    for url_suffix, tok_suffix in (("REST_API_URL", "REST_API_TOKEN"),
+                                   ("REDIS_REST_URL", "REDIS_REST_TOKEN")):
+        for key, val in env.items():
+            if val and key.endswith(url_suffix) and str(val).startswith("http"):
+                prefix = key[: -len(url_suffix)]
+                token = env.get(prefix + tok_suffix)
+                if token:
+                    return val, token
+    return None, None
+
+
 _STORE = None
 
 
@@ -293,17 +343,17 @@ def get_store():
     if _STORE is not None:
         return _STORE
 
-    url = (os.environ.get("UPSTASH_REDIS_REST_URL")
-           or os.environ.get("KV_REST_API_URL"))
-    token = (os.environ.get("UPSTASH_REDIS_REST_TOKEN")
-             or os.environ.get("KV_REST_API_TOKEN"))
+    url, token = _find_redis_creds()
 
     if url and token:
         _STORE = RedisStore(url, token)
-        print("[store] Using Upstash Redis backend.")
+        print("[store] Using Upstash Redis backend (persistent).")
     else:
         _STORE = JSONFileStore()
-        where = "/tmp (ephemeral!)" if os.environ.get("VERCEL") else _STORE.path
-        print(f"[store] Using local JSON file backend at {where}. "
-              f"Set UPSTASH_REDIS_REST_URL/TOKEN for persistent multi-user storage.")
+        if os.environ.get("VERCEL"):
+            print("[store] WARNING: No Redis creds found — using /tmp file backend, which is "
+                  "EPHEMERAL on Vercel. Users/resumes will be LOST on redeploy. "
+                  "Connect Upstash Redis and set its REST env vars.")
+        else:
+            print(f"[store] Using local JSON file backend at {_STORE.path}.")
     return _STORE

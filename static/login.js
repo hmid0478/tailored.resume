@@ -6,6 +6,8 @@
     return;
   }
 
+  hardenAgainstAutofill(["email", "password"]);
+
   const form = document.getElementById("login-form");
   const msg = document.getElementById("auth-msg");
   const btn = document.getElementById("login-btn");
@@ -43,3 +45,23 @@
     }
   });
 })();
+
+/* Defeat browser autofill so the login boxes start empty. Fields begin read-only
+   (browsers won't autofill a read-only field on load) and unlock on first focus;
+   any value the browser injected is cleared unless the user has already typed. */
+function hardenAgainstAutofill(ids) {
+  const els = ids.map((id) => document.getElementById(id)).filter(Boolean);
+  els.forEach((el) => {
+    el.setAttribute("readonly", "readonly");
+    const unlock = () => el.removeAttribute("readonly");
+    el.addEventListener("focus", unlock, { once: true });
+    el.addEventListener("mousedown", unlock, { once: true });
+    el.addEventListener("input", () => { el.dataset.touched = "1"; });
+  });
+  const clear = () => els.forEach((el) => {
+    if (document.activeElement !== el && el.dataset.touched !== "1") el.value = "";
+  });
+  clear();
+  setTimeout(clear, 150);
+  setTimeout(clear, 500);
+}
