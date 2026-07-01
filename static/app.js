@@ -12,7 +12,7 @@ if (!AUTH_TOKEN) {
   throw new Error("Not authenticated — redirecting to /login");
 }
 // Every localStorage key the app writes is namespaced per user, so two people
-// sharing a browser never see each other's JD, keys, tracker, or results.
+// sharing a browser never see each other's JD, keys, or results.
 const USER_PREFIX = "u:" + AUTH_EMAIL + ":";
 
 // Fetch wrapper that attaches the bearer token and handles session expiry.
@@ -61,7 +61,6 @@ const STORAGE_KEYS = {
   promptFileName: "rt_prompt_file_name",
   promptFileContent: "rt_prompt_file_content",
   promptMode: "rt_prompt_mode",  // "upload" or "paste"
-  trackerEntries: "rt_tracker_entries",
   pdfTemplate: "rt_pdf_template",
   preserveMode: "rt_preserve_mode",
   dlCompany: "rt_dl_company",
@@ -509,16 +508,6 @@ form.addEventListener("submit", async (e) => {
     currentResumeId = null;
     saveResumeToServer(jd);
 
-    // Auto-add tracker entry (company/role come from the JD now)
-    const trackerEntry = {
-      platform: "Manual",
-      company: lastJobMeta.company || "",
-      position: lastJobMeta.position || (tailoredData && tailoredData.title) || "",
-      url: "",
-      status: "Applied",
-    };
-    addTrackerEntry(trackerEntry);
-
     setTimeout(() => {
       resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 100);
@@ -540,13 +529,7 @@ function _sanitizeFilenamePart(s) {
 }
 
 function _autoCompanyName() {
-  // Source priority: scraped metadata, then last tracker entry.
   if (scrapedMetadata && scrapedMetadata.company) return scrapedMetadata.company;
-  const entries = loadJSONFromStorage(STORAGE_KEYS.trackerEntries) || [];
-  if (entries.length) {
-    const latest = entries[entries.length - 1];
-    if (latest && latest.company) return latest.company;
-  }
   return "";
 }
 
@@ -942,190 +925,6 @@ function renderQAResults(answers) {
   });
 }
 
-// ── Job Application Tracker ──
-const trackerTbody = document.getElementById("tracker-tbody");
-const trackerEmpty = document.getElementById("tracker-empty");
-const trackerCopyBtn = document.getElementById("tracker-copy-btn");
-const trackerClearBtn = document.getElementById("tracker-clear-btn");
-
-function loadTrackerEntries() {
-  return loadJSONFromStorage(STORAGE_KEYS.trackerEntries) || [];
-}
-
-function saveTrackerEntries(entries) {
-  saveToStorage(STORAGE_KEYS.trackerEntries, entries);
-}
-
-function addTrackerEntry(entry) {
-  const entries = loadTrackerEntries();
-  entry.id = Date.now().toString();
-  entry.date = new Date().toLocaleDateString("en-US", { month: "2-digit", day: "2-digit", year: "numeric" });
-  entries.push(entry);
-  saveTrackerEntries(entries);
-  renderTracker();
-}
-
-function updateTrackerEntry(id, field, value) {
-  const entries = loadTrackerEntries();
-  const entry = entries.find(e => e.id === id);
-  if (entry) {
-    entry[field] = value;
-    saveTrackerEntries(entries);
-  }
-}
-
-function deleteTrackerEntry(id) {
-  const entries = loadTrackerEntries().filter(e => e.id !== id);
-  saveTrackerEntries(entries);
-  renderTracker();
-}
-
-function renderTracker() {
-  const entries = loadTrackerEntries();
-  trackerTbody.innerHTML = "";
-
-  if (entries.length === 0) {
-    trackerEmpty.classList.remove("hidden");
-    return;
-  }
-
-  trackerEmpty.classList.add("hidden");
-
-  entries.forEach((entry) => {
-    const tr = document.createElement("tr");
-
-    // Date
-    const tdDate = document.createElement("td");
-    tdDate.textContent = entry.date || "";
-    tr.appendChild(tdDate);
-
-    // Job Link (editable)
-    const tdLink = document.createElement("td");
-    const linkWrap = document.createElement("div");
-    linkWrap.style.display = "flex";
-    linkWrap.style.alignItems = "center";
-    linkWrap.style.gap = "6px";
-    const linkSpan = document.createElement("span");
-    linkSpan.className = "tracker-editable";
-    linkSpan.contentEditable = "true";
-    linkSpan.style.minWidth = "80px";
-    linkSpan.textContent = entry.url || "";
-    linkSpan.addEventListener("blur", () => {
-      const val = linkSpan.textContent.trim();
-      updateTrackerEntry(entry.id, "url", val);
-      renderTracker();
-    });
-    linkWrap.appendChild(linkSpan);
-    if (entry.url) {
-      const a = document.createElement("a");
-      a.className = "tracker-link";
-      a.href = entry.url;
-      a.target = "_blank";
-      a.rel = "noopener";
-      a.textContent = "\u2197";
-      a.title = "Open link";
-      a.style.flexShrink = "0";
-      linkWrap.appendChild(a);
-    }
-    tdLink.appendChild(linkWrap);
-    tr.appendChild(tdLink);
-
-    // Platform (where the job was found)
-    const tdPlatform = document.createElement("td");
-    tdPlatform.textContent = entry.platform || "";
-    tr.appendChild(tdPlatform);
-
-    // Company (the company being applied to — editable)
-    const tdCompany = document.createElement("td");
-    const companySpan = document.createElement("span");
-    companySpan.className = "tracker-editable";
-    companySpan.contentEditable = "true";
-    companySpan.textContent = entry.company || "";
-    companySpan.addEventListener("blur", () => {
-      updateTrackerEntry(entry.id, "company", companySpan.textContent.trim());
-    });
-    tdCompany.appendChild(companySpan);
-    tr.appendChild(tdCompany);
-
-    // Role (editable)
-    const tdRole = document.createElement("td");
-    const roleSpan = document.createElement("span");
-    roleSpan.className = "tracker-editable";
-    roleSpan.contentEditable = "true";
-    roleSpan.textContent = entry.position || "";
-    roleSpan.addEventListener("blur", () => {
-      updateTrackerEntry(entry.id, "position", roleSpan.textContent.trim());
-    });
-    tdRole.appendChild(roleSpan);
-    tr.appendChild(tdRole);
-
-    // Status (dropdown)
-    const tdStatus = document.createElement("td");
-    const select = document.createElement("select");
-    select.className = "tracker-status-select";
-    ["Applied", "Interview", "Offer", "Rejected", "Withdrawn"].forEach((s) => {
-      const opt = document.createElement("option");
-      opt.value = s;
-      opt.textContent = s;
-      if (entry.status === s) opt.selected = true;
-      select.appendChild(opt);
-    });
-    select.addEventListener("change", () => {
-      updateTrackerEntry(entry.id, "status", select.value);
-    });
-    tdStatus.appendChild(select);
-    tr.appendChild(tdStatus);
-
-    // Delete button
-    const tdDel = document.createElement("td");
-    const delBtn = document.createElement("button");
-    delBtn.className = "tracker-delete-btn";
-    delBtn.innerHTML = "&#x2715;";
-    delBtn.title = "Delete entry";
-    delBtn.addEventListener("click", () => deleteTrackerEntry(entry.id));
-    tdDel.appendChild(delBtn);
-    tr.appendChild(tdDel);
-
-    trackerTbody.appendChild(tr);
-  });
-}
-
-// Copy tracker to clipboard as TSV (Excel-compatible)
-trackerCopyBtn.addEventListener("click", async () => {
-  const entries = loadTrackerEntries();
-  if (entries.length === 0) return showError("No entries to copy.");
-
-  const rows = entries.map(e =>
-    `${e.date || ""}\t${e.url || ""}\t${e.platform || ""}\t${e.company || ""}\t${e.position || ""}\t${e.status || ""}`
-  );
-  const tsv = rows.join("\n");
-
-  try {
-    await navigator.clipboard.writeText(tsv);
-  } catch {
-    const ta = document.createElement("textarea");
-    ta.value = tsv;
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand("copy");
-    ta.remove();
-  }
-
-  trackerCopyBtn.textContent = "Copied!";
-  trackerCopyBtn.classList.add("copied");
-  setTimeout(() => {
-    trackerCopyBtn.textContent = "Copy to Clipboard (Excel)";
-    trackerCopyBtn.classList.remove("copied");
-  }, 2000);
-});
-
-// Clear all tracker entries
-trackerClearBtn.addEventListener("click", () => {
-  if (!confirm("Clear all tracked applications? This cannot be undone.")) return;
-  saveTrackerEntries([]);
-  renderTracker();
-});
-
 // ── User bar / logout ──
 (function initUserBar() {
   const emailEl = document.getElementById("user-bar-email");
@@ -1424,9 +1223,6 @@ function restoreState() {
 
   // Update setup status (will auto-collapse if ready)
   updateSetupStatus();
-
-  // Render tracker
-  renderTracker();
 
   // Load this user's private resume library from the server.
   loadMyResumes();
