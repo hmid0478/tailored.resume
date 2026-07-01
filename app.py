@@ -180,24 +180,33 @@ def extract_personal_info_text(resume_text: str) -> dict:
     Looks at the first few non-empty lines for name, email, phone, URLs.
     """
     lines = resume_text.splitlines()
-    non_empty = [l.strip() for l in lines if l.strip()][:8]
+    non_empty = [l.strip() for l in lines if l.strip()][:12]
 
     info = {"name": "", "contact": ""}
     contact_parts = []
 
-    for i, line in enumerate(non_empty):
-        # First non-empty line is usually the name
-        if i == 0:
-            # Skip if it looks like contact info
-            if "@" not in line and "http" not in line.lower() and not re.search(r"\(\d{3}\)", line):
-                info["name"] = line.strip()
-                continue
+    # Broad phone matcher: (123) 456-7890, 123-456-7890, +1 234 567 8900, 123.456.7890, etc.
+    phone_re = re.compile(r"(?:\+?\d[\d\-.\s()]{7,}\d)")
 
-        # Collect contact-like lines (contain email, phone, URL, location with pipe separators)
-        if any(indicator in line.lower() for indicator in ["@", "http", "linkedin", "github", "|"]) or re.search(r"\(\d{3}\)", line):
+    def _is_contactish(text: str) -> bool:
+        low = text.lower()
+        if any(ind in low for ind in ["@", "http", "linkedin", "github", "|", "twitter", "portfolio"]):
+            return True
+        if phone_re.search(text):
+            return True
+        return False
+
+    for i, line in enumerate(non_empty):
+        # First non-empty line is usually the name (unless it's clearly contact info).
+        if i == 0 and not _is_contactish(line):
+            info["name"] = line.strip()
+            continue
+
+        # Collect contact-like lines (email, phone, URL, social handles, pipe-separated blocks).
+        if _is_contactish(line):
             contact_parts.append(line.strip())
-        elif i <= 2 and re.match(r"^[A-Za-z\s,]+,\s*[A-Z]{2}", line):
-            # Looks like "City, ST" line
+        elif i <= 3 and re.match(r"^[A-Za-z .'\-]+,\s*[A-Za-z]{2,}\.?$", line):
+            # A standalone location line like "San Diego, CA" or "London, UK".
             contact_parts.append(line.strip())
 
     if contact_parts:
@@ -773,12 +782,15 @@ def _build_tailor_user_msg(resume_text: str, prompt_text: str, jd_text: str, det
 3. Only swap when the resume's term and the JD's term refer to the same or a directly adjacent
    technology. Do NOT introduce a technology that has no corresponding term already in the resume.
    A swapped keyword must keep the sentence essentially the same length.
-4. Do NOT change the candidate's name, title, or contact.
+4. Do NOT change the candidate's name, job title, or ANY contact detail (email, phone, location,
+   LinkedIn / GitHub / portfolio links) — copy them EXACTLY as they appear in the original resume.
 5. JOB IDENTITY: extract the hiring COMPANY name and the JOB TITLE from the JOB DESCRIPTION
    (not the resume) into "detected_company" and "detected_job_title" (empty string if not stated)."""
     else:
         rules_block = f"""CRITICAL RULES:
-1. Do NOT change the candidate's title. Keep the EXACT title from the original resume.
+1. Do NOT change the candidate's TITLE or any PERSONAL DETAIL. Keep the name, email, phone,
+   location, and links (LinkedIn / GitHub / portfolio) and the job title EXACTLY as they
+   appear in the original resume — never reformat, translate, abbreviate, or invent any of them.
 2. The output MUST have the SAME sections as the original resume, in the SAME order. The detected sections are: [{sections_list}].
 3. Do NOT drop, merge, or add sections. Mirror the original resume's structure exactly.
 4. TECHNOLOGY ALIGNMENT (high priority): Read EVERY technology, framework, language,
@@ -2614,9 +2626,17 @@ def api_tailor():
         if not resume_text:
             return jsonify({"error": "Please upload a resume file or paste resume text."}), 400
 
-        # Extract personal info from text for all file types (fallback)
+        # Extract personal info from the plain text and use it to fill any gaps.
+        # (DOCX resumes without a header table return nothing from extract_personal_info_docx,
+        # so without this merge the AI's version of name/phone/LinkedIn/location would leak in.)
+        text_info = extract_personal_info_text(resume_text)
         if not personal_info:
-            personal_info = extract_personal_info_text(resume_text)
+            personal_info = text_info
+        else:
+            if not personal_info.get("name"):
+                personal_info["name"] = text_info.get("name", "")
+            if not personal_info.get("contact"):
+                personal_info["contact"] = text_info.get("contact", "")
 
         # Detect sections from the original resume to preserve structure
         detected_sections = detect_resume_sections(resume_text)
