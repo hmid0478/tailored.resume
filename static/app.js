@@ -537,15 +537,23 @@ function getDlTitle() {
   return (dlTitleInput && dlTitleInput.value || "").trim();
 }
 
+// The candidate's name, taking any manual edit into account.
+function _resumeName() {
+  const edited = (document.getElementById("edit-name")?.value || "").trim();
+  return edited || (tailoredData && tailoredData.name) || "";
+}
+
+// PDF filename is "{Candidate Name} - {Job Title}.pdf" (company is only used to
+// organize resumes in My Resumes, not in the downloaded file name).
 function buildResumeFilename() {
-  const company = _sanitizeFilenamePart(getDlCompany());
+  const name = _sanitizeFilenamePart(_resumeName());
   const title = _sanitizeFilenamePart(getDlTitle());
   let stem;
-  if (company && title) stem = `${company} - ${title}`;
-  else if (company)      stem = company;
-  else if (title)        stem = title;
-  else                   stem = _sanitizeFilenamePart((tailoredData && tailoredData.name) || "Resume");
-  return `${stem || "Resume"}.pdf`;
+  if (name && title) stem = `${name} - ${title}`;
+  else if (name)     stem = name;
+  else if (title)    stem = title;
+  else               stem = "Resume";
+  return `${stem}.pdf`;
 }
 
 function _updateFilenamePreview() {
@@ -1046,7 +1054,7 @@ function renderSavedResumes(list) {
 
     const info = document.createElement("div");
     info.className = "saved-info";
-    const titleLine = [r.title, r.company].filter(Boolean).join(" · ") || r.name || "Untitled resume";
+    const titleLine = [r.company, r.title].filter(Boolean).join(" · ") || r.name || "Untitled resume";
     info.innerHTML =
       `<div class="saved-title">${esc(titleLine)}</div>` +
       `<div class="saved-meta">${esc(formatSavedDate(r.created_at))}</div>`;
@@ -1128,16 +1136,16 @@ async function deleteSavedResume(id) {
   }
 }
 
-// Build a "{Company} - {Title}.pdf" filename from arbitrary company/title.
+// Build a "{Candidate Name} - {Job Title}.pdf" filename for a saved resume.
 function buildFilenameFrom(company, title, data) {
-  const c = _sanitizeFilenamePart(company || "");
+  const name = _sanitizeFilenamePart((data && data.name) || "");
   const t = _sanitizeFilenamePart(title || "");
   let stem;
-  if (c && t) stem = `${c} - ${t}`;
-  else if (c) stem = c;
+  if (name && t) stem = `${name} - ${t}`;
+  else if (name) stem = name;
   else if (t) stem = t;
-  else stem = _sanitizeFilenamePart((data && data.name) || "Resume");
-  return `${stem || "Resume"}.pdf`;
+  else stem = "Resume";
+  return `${stem}.pdf`;
 }
 
 // Render a resume JSON to PDF (using the currently selected template) and download it.
