@@ -162,6 +162,10 @@ class RedisStore:
         removed = self._cmd("HDEL", f"resumes:{email}", resume_id)
         return bool(removed)
 
+    def clear_resumes(self, email: str) -> None:
+        email = _norm_email(email)
+        self._cmd("DEL", f"resumes:{email}")
+
 
 # ─────────────────────────────────────────────
 # Local JSON-file backend (dev / fallback)
@@ -296,6 +300,13 @@ class JSONFileStore:
             bucket.pop(resume_id, None)
             self._write(data)
             return existed
+
+    def clear_resumes(self, email: str) -> None:
+        email = _norm_email(email)
+        with self._lock:
+            data = self._read()
+            data["resumes"].pop(email, None)
+            self._write(data)
 
 
 # ─────────────────────────────────────────────

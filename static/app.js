@@ -1052,6 +1052,13 @@ function renderSavedResumes(list) {
     card.className = "saved-card";
     if (r.id === currentResumeId) card.classList.add("active");
 
+    const sel = document.createElement("input");
+    sel.type = "checkbox";
+    sel.className = "saved-select";
+    sel.dataset.id = r.id;
+    sel.addEventListener("change", updateBulkButtons);
+    card.appendChild(sel);
+
     const info = document.createElement("div");
     info.className = "saved-info";
     const titleLine = [r.company, r.title].filter(Boolean).join(" · ") || r.name || "Untitled resume";
@@ -1092,6 +1099,61 @@ function renderSavedResumes(list) {
     card.appendChild(actions);
     savedListEl.appendChild(card);
   });
+
+  const selectAll = document.getElementById("saved-selectall");
+  if (selectAll) selectAll.checked = false;
+  updateBulkButtons();
+}
+
+// ── Bulk delete (select multiple / all) ──
+function getSelectedResumeIds() {
+  if (!savedListEl) return [];
+  return [...savedListEl.querySelectorAll(".saved-select:checked")].map((cb) => cb.dataset.id);
+}
+
+function updateBulkButtons() {
+  const n = getSelectedResumeIds().length;
+  const btn = document.getElementById("saved-delete-selected-btn");
+  if (btn) {
+    btn.disabled = n === 0;
+    btn.textContent = n ? `Delete selected (${n})` : "Delete selected";
+  }
+}
+
+async function deleteSelectedResumes() {
+  const ids = getSelectedResumeIds();
+  if (!ids.length) return;
+  if (!confirm(`Delete ${ids.length} selected resume${ids.length === 1 ? "" : "s"}? This cannot be undone.`)) return;
+  try {
+    const res = await authFetch("/api/resumes/bulk-delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    });
+    const json = await res.json();
+    if (!res.ok || json.error) throw new Error(json.error || "Could not delete resumes.");
+    if (ids.includes(currentResumeId)) currentResumeId = null;
+    loadMyResumes();
+  } catch (err) {
+    showError(err.message);
+  }
+}
+
+async function deleteAllResumes() {
+  if (!confirm("Delete ALL your saved resumes? This cannot be undone.")) return;
+  try {
+    const res = await authFetch("/api/resumes/bulk-delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ all: true }),
+    });
+    const json = await res.json();
+    if (!res.ok || json.error) throw new Error(json.error || "Could not delete resumes.");
+    currentResumeId = null;
+    loadMyResumes();
+  } catch (err) {
+    showError(err.message);
+  }
 }
 
 async function openSavedResume(id) {
@@ -1210,6 +1272,18 @@ function formatSavedDate(iso) {
 
 const savedRefreshBtn = document.getElementById("saved-refresh-btn");
 if (savedRefreshBtn) savedRefreshBtn.addEventListener("click", loadMyResumes);
+
+const savedDeleteSelectedBtn = document.getElementById("saved-delete-selected-btn");
+if (savedDeleteSelectedBtn) savedDeleteSelectedBtn.addEventListener("click", deleteSelectedResumes);
+
+const savedDeleteAllBtn = document.getElementById("saved-delete-all-btn");
+if (savedDeleteAllBtn) savedDeleteAllBtn.addEventListener("click", deleteAllResumes);
+
+const savedSelectAll = document.getElementById("saved-selectall");
+if (savedSelectAll) savedSelectAll.addEventListener("change", () => {
+  savedListEl.querySelectorAll(".saved-select").forEach((cb) => { cb.checked = savedSelectAll.checked; });
+  updateBulkButtons();
+});
 
 // ── Batch generation (tailor + save a resume for multiple jobs) ──
 const batchList = document.getElementById("batch-list");

@@ -249,7 +249,12 @@ Describe a challenging project you worked on..."></textarea>
     <div class="saved-section" id="saved-section">
       <div class="saved-header">
         <h2>My Resumes <span class="saved-count" id="saved-count"></span></h2>
-        <button type="button" class="btn btn-tracker" id="saved-refresh-btn">Refresh</button>
+        <div class="saved-header-actions">
+          <label class="saved-selectall"><input type="checkbox" id="saved-selectall" /> Select all</label>
+          <button type="button" class="btn btn-tracker" id="saved-delete-selected-btn" disabled>Delete selected</button>
+          <button type="button" class="btn btn-tracker btn-tracker-danger" id="saved-delete-all-btn">Delete all</button>
+          <button type="button" class="btn btn-tracker" id="saved-refresh-btn">Refresh</button>
+        </div>
       </div>
       <div class="saved-list" id="saved-list"></div>
       <div class="saved-empty" id="saved-empty">Your tailored resumes are saved here privately. Tailor a resume to see it appear.</div>

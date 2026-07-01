@@ -2531,6 +2531,32 @@ def api_save_resume():
     return jsonify({"success": True, "id": saved["id"], "created_at": saved["created_at"]})
 
 
+@app.route("/api/resumes/bulk-delete", methods=["POST"])
+@require_user
+def api_bulk_delete_resumes():
+    """Delete many of the user's resumes at once: {"ids": [...]} or {"all": true}."""
+    email = request.identity.get("email")
+    data = request.get_json(silent=True) or {}
+    try:
+        if data.get("all"):
+            if hasattr(STORE, "clear_resumes"):
+                STORE.clear_resumes(email)
+            else:
+                for r in STORE.list_resumes(email):
+                    STORE.delete_resume(email, r.get("id"))
+        else:
+            ids = data.get("ids")
+            if not isinstance(ids, list):
+                return jsonify({"error": "Provide an 'ids' list or 'all': true."}), 400
+            for rid in ids:
+                if rid:
+                    STORE.delete_resume(email, str(rid))
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"Could not delete resumes: {e}"}), 500
+    return jsonify({"success": True})
+
+
 @app.route("/api/resumes/<resume_id>", methods=["GET"])
 @require_user
 def api_get_resume(resume_id):
