@@ -21,6 +21,29 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* Off-screen decoy inputs that soak up the browser's autofill. Not display:none
+   (browsers skip hidden fields when autofilling). */
+.autofill-decoy {
+  position: absolute !important;
+  left: -9999px !important;
+  top: -9999px !important;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* If a browser still force-fills a real field, at least kill the yellow tint so it
+   matches the dark theme (and our JS clears the value anyway). */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #e4e6f0;
+  -webkit-box-shadow: 0 0 0 1000px #0f1117 inset;
+  box-shadow: 0 0 0 1000px #0f1117 inset;
+  caret-color: #e4e6f0;
+}
+
 body {
   font-family: "Inter", system-ui, -apple-system, sans-serif;
   background: var(--bg);

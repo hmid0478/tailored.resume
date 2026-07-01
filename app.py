@@ -1169,6 +1169,13 @@ def _provider_error_response(exc: Exception):
     # Provider overload / temporarily unavailable (Gemini's "model experiencing high demand", OpenAI 503, etc.)
     if "unavailable" in err_lower or "503" in err_str or "overloaded" in err_lower or "high demand" in err_lower or "servererror" in name:
         return jsonify({"error": "The AI provider is overloaded right now. Wait 30 seconds and retry, or pick a different model/provider in the dropdown."}), 503
+    # Invalid / unknown model ID — the Model field doesn't match the chosen provider.
+    if ("invalid model" in err_lower or "model not found" in err_lower or "model_not_found" in err_lower
+            or "unknown model" in err_lower
+            or ("model" in err_lower and ("does not exist" in err_lower or "not exist" in err_lower))):
+        return jsonify({"error": "Invalid model ID for the selected provider. Check the Model field "
+                        "(or clear it to use the provider's default) and make sure the model name "
+                        "matches the Provider you picked in the dropdown."}), 400
     # Connection-ish (Ollama not running, bad base_url, etc.)
     if "connection" in name or "Connection" in err_str or "ECONNREFUSED" in err_str:
         return jsonify({"error": "Could not reach the AI provider. Check the base URL or that the local server is running."}), 502

@@ -53,7 +53,11 @@ function hardenAgainstAutofill(ids) {
   const els = ids.map((id) => document.getElementById(id)).filter(Boolean);
   els.forEach((el) => {
     el.setAttribute("readonly", "readonly");
-    const unlock = () => el.removeAttribute("readonly");
+    const unlock = () => {
+      el.removeAttribute("readonly");
+      // Wipe anything the browser injected the instant the user engages (before they type).
+      if (el.dataset.touched !== "1") el.value = "";
+    };
     el.addEventListener("focus", unlock, { once: true });
     el.addEventListener("mousedown", unlock, { once: true });
     el.addEventListener("input", () => { el.dataset.touched = "1"; });

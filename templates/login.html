@@ -18,9 +18,12 @@
       <div class="auth-msg" id="auth-msg"></div>
 
       <form id="login-form" autocomplete="off">
+        <!-- Off-screen decoys absorb the browser's autofill so the real fields stay empty. -->
+        <input type="text" name="username" tabindex="-1" aria-hidden="true" autocomplete="username" class="autofill-decoy" />
+        <input type="password" name="password" tabindex="-1" aria-hidden="true" autocomplete="current-password" class="autofill-decoy" />
         <div class="form-group">
           <label for="email">Email</label>
-          <input type="email" id="email" name="rt_login_email" autocomplete="off" placeholder="you@example.com" required />
+          <input type="text" inputmode="email" id="email" name="rt_login_email" autocomplete="off" placeholder="you@example.com" required />
         </div>
         <div class="form-group">
           <label for="password">Password</label>

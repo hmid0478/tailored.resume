@@ -231,7 +231,10 @@
     const els = ids.map((id) => document.getElementById(id)).filter(Boolean);
     els.forEach((el) => {
       el.setAttribute("readonly", "readonly");
-      const unlock = () => el.removeAttribute("readonly");
+      const unlock = () => {
+        el.removeAttribute("readonly");
+        if (el.dataset.touched !== "1") el.value = "";
+      };
       el.addEventListener("focus", unlock, { once: true });
       el.addEventListener("mousedown", unlock, { once: true });
       el.addEventListener("input", () => { el.dataset.touched = "1"; });
