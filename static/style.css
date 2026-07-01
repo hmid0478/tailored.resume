@@ -1823,3 +1823,7 @@ del.diff-removed { background: rgba(239,68,68,0.25);  color: #fca5a5; text-decor
   .batch-job-row { flex-wrap: wrap; }
   .batch-company, .batch-title { flex: 1 1 100%; }
 }
+
+/* Saved-resume cards: let the action buttons wrap on narrow screens */
+.saved-actions { flex-wrap: wrap; justify-content: flex-end; }
+@media (max-width: 600px) { .saved-card { flex-wrap: wrap; } .saved-info { flex: 1 1 100%; } }

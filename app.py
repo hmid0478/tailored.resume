@@ -659,17 +659,6 @@ Apply ALL phases above to the following inputs:
 """.strip()
 
 
-# Conservative system prompt used in keyword-swap (preservation) mode. It deliberately
-# does NOT tell the model to rewrite/expand/reorder — it only aligns technology terms.
-PRESERVE_TAILORING_PROMPT = (
-    "You are a precise resume keyword-alignment tool. You do NOT rewrite resumes and you "
-    "do NOT change wording, sentence length, or structure. You return the candidate's resume "
-    "exactly as written, changing ONLY technology keywords (languages, frameworks, libraries, "
-    "tools, platforms) so they match the terminology used in the job description — in every "
-    "place they appear, including older roles. You never fabricate experience or add content."
-).strip()
-
-
 # ─────────────────────────────────────────────
 # Resume section detection
 # ─────────────────────────────────────────────
@@ -779,13 +768,9 @@ def _classify_section(name: str) -> str:
 # AI API calls (Claude + Gemini)
 # ─────────────────────────────────────────────
 
-def _build_tailor_user_msg(resume_text: str, prompt_text: str, jd_text: str, detected_sections: list[str] | None = None, preserve_mode: bool = False) -> str:
-    """Build the full prompt for resume tailoring (shared across providers).
-
-    preserve_mode=True switches to keyword-swap behavior: reproduce the resume verbatim
-    and only align technology terms to the JD, keeping every sentence's length/structure.
-    """
-    system_msg = PRESERVE_TAILORING_PROMPT if preserve_mode else prompt_text.strip()
+def _build_tailor_user_msg(resume_text: str, prompt_text: str, jd_text: str, detected_sections: list[str] | None = None) -> str:
+    """Build the full prompt for resume tailoring (shared across providers)."""
+    system_msg = prompt_text.strip()
 
     # Build dynamic section schema based on detected sections
     if not detected_sections:
@@ -822,26 +807,7 @@ def _build_tailor_user_msg(resume_text: str, prompt_text: str, jd_text: str, det
     sections_json = ",\n".join(section_examples)
     sections_list = ", ".join(detected_sections)
 
-    if preserve_mode:
-        rules_block = f"""CRITICAL RULES — KEYWORD-SWAP / PRESERVATION MODE (these OVERRIDE any rewrite guidance above):
-1. Reproduce the resume EXACTLY: same sections in the SAME order ([{sections_list}]), and INCLUDE
-   EVERY bullet from EVERY role — drop none, merge none. Keep every sentence/bullet/paragraph
-   with the SAME wording and the SAME approximate length. Do NOT rewrite, expand, shorten,
-   reorder, or add metrics. The output must have the same number of bullets as the original.
-2. The ONLY change allowed is swapping TECHNOLOGY KEYWORDS (languages, frameworks, libraries,
-   tools, platforms) to the JOB DESCRIPTION's terminology, in EVERY place they appear — the
-   Summary, the Skills section, and ALL work experiences INCLUDING the oldest ones.
-   Examples: "AngularJS" -> "Angular", "JS" -> "JavaScript", "K8s" -> "Kubernetes",
-   "Postgres" -> "PostgreSQL", "node" -> "Node.js", "message-based" -> "event-driven".
-3. Only swap when the resume's term and the JD's term refer to the same or a directly adjacent
-   technology. Do NOT introduce a technology that has no corresponding term already in the resume.
-   A swapped keyword must keep the sentence essentially the same length.
-4. Do NOT change the candidate's name, job title, or ANY contact detail (email, phone, location,
-   LinkedIn / GitHub / portfolio links) — copy them EXACTLY as they appear in the original resume.
-5. JOB IDENTITY: extract the hiring COMPANY name and the JOB TITLE from the JOB DESCRIPTION
-   (not the resume) into "detected_company" and "detected_job_title" (empty string if not stated)."""
-    else:
-        rules_block = f"""CRITICAL RULES:
+    rules_block = f"""CRITICAL RULES:
 1. Do NOT change the candidate's TITLE or any PERSONAL DETAIL. Keep the name, email, phone,
    location, and links (LinkedIn / GitHub / portfolio) and the job title EXACTLY as they
    appear in the original resume — never reformat, translate, abbreviate, or invent any of them.
@@ -875,7 +841,7 @@ def _build_tailor_user_msg(resume_text: str, prompt_text: str, jd_text: str, det
 {jd_text}
 
 === INSTRUCTIONS ===
-{"Follow the PRESERVATION rules below to the letter." if preserve_mode else "Apply every phase from your system prompt to these inputs."}
+Apply every phase from your system prompt. AGGRESSIVELY REWRITE the EXPERIENCE section: rewrite EVERY bullet in EVERY role to match this specific job description — its responsibilities, priorities, and exact terminology — while keeping all of the candidate's real facts and every bullet. The experience must read as tailored to THIS job, not generic.
 
 {rules_block}
 
@@ -1372,8 +1338,8 @@ def _count_source_bullets(resume_text: str) -> int:
 
 
 def _do_tailor_call(api_key, resume_text, prompt_text, jd_text, provider,
-                    detected_sections, model, base_url, extra_instruction="", preserve_mode=False):
-    prompt = _build_tailor_user_msg(resume_text, prompt_text, jd_text, detected_sections, preserve_mode=preserve_mode)
+                    detected_sections, model, base_url, extra_instruction=""):
+    prompt = _build_tailor_user_msg(resume_text, prompt_text, jd_text, detected_sections)
     if extra_instruction:
         prompt += "\n\n" + extra_instruction
     raw = call_ai(provider, api_key, prompt, max_tokens=16000, model=model, base_url=base_url, json_mode=True)
@@ -1404,7 +1370,6 @@ def tailor_resume(
     detected_sections: list[str] | None = None,
     model: str | None = None,
     base_url: str | None = None,
-    preserve_mode: bool = False,
 ) -> dict:
     """Call AI to tailor the resume. Returns structured JSON.
 
@@ -1412,7 +1377,7 @@ def tailor_resume(
     once with an explicit instruction listing each missing section by name.
     """
     data = _do_tailor_call(api_key, resume_text, prompt_text, jd_text, provider,
-                           detected_sections, model, base_url, preserve_mode=preserve_mode)
+                           detected_sections, model, base_url)
 
     # If we know what sections the original had, verify the AI kept them.
     if detected_sections:
@@ -1431,8 +1396,7 @@ def tailor_resume(
             )
             try:
                 retry = _do_tailor_call(api_key, resume_text, prompt_text, jd_text, provider,
-                                        detected_sections, model, base_url, extra_instruction=extra,
-                                        preserve_mode=preserve_mode)
+                                        detected_sections, model, base_url, extra_instruction=extra)
                 # Use the retry only if it has at least as many sections AND restores the missing ones.
                 retry_got = set(_section_headings(retry))
                 if (expected - retry_got) == set() or len(retry_got) > len(got):
@@ -1458,8 +1422,7 @@ def tailor_resume(
         )
         try:
             retry = _do_tailor_call(api_key, resume_text, prompt_text, jd_text, provider,
-                                    detected_sections, model, base_url, extra_instruction=extra,
-                                    preserve_mode=preserve_mode)
+                                    detected_sections, model, base_url, extra_instruction=extra)
             if _count_result_bullets(retry) > got_bullets and (
                 not detected_sections or _has_all_sections(retry, data)):
                 data = retry
@@ -2695,7 +2658,6 @@ def api_tailor():
         api_key = request.form.get("api_key", "").strip()
         model = request.form.get("model", "").strip() or None
         base_url = request.form.get("base_url", "").strip() or None
-        preserve_mode = request.form.get("preserve_mode", "").strip().lower() in ("1", "true", "yes", "on")
         # Local providers (Ollama, openai_compatible pointing at localhost) often don't need a key.
         is_local = provider == "ollama" or (provider == "openai_compatible" and base_url and "localhost" in base_url)
         if not api_key and not is_local:
@@ -2760,7 +2722,7 @@ def api_tailor():
 
         result = tailor_resume(
             api_key, resume_text, prompt_text, jd_text, provider, detected_sections,
-            model=model, base_url=base_url, preserve_mode=preserve_mode,
+            model=model, base_url=base_url,
         )
         job_meta = _pop_job_meta(result)
         _strip_bogus_language_section(result)

@@ -62,7 +62,6 @@ const STORAGE_KEYS = {
   promptFileContent: "rt_prompt_file_content",
   promptMode: "rt_prompt_mode",  // "upload" or "paste"
   pdfTemplate: "rt_pdf_template",
-  preserveMode: "rt_preserve_mode",
   batchJobs: "rt_batch_jobs",
   dlCompany: "rt_dl_company",
   dlTitle: "rt_dl_title",
@@ -460,14 +459,11 @@ form.addEventListener("submit", async (e) => {
 
   // Prompt is optional — the backend has a built-in default
 
-  const preserveMode = !!document.getElementById("preserve-mode-checkbox")?.checked;
-
   const fd = new FormData();
   fd.append("provider", provider);
   fd.append("api_key", apiKey);
   if (model) fd.append("model", model);
   if (baseUrl) fd.append("base_url", baseUrl);
-  if (preserveMode) fd.append("preserve_mode", "1");
   fd.append("jd", jd);
   fd.append("resume_file", resumeFileInput.files[0]);
 
@@ -949,7 +945,6 @@ function collectSettings() {
     providerKeys: getProviderMap(STORAGE_KEYS.providerKeys),
     providerModels: getProviderMap(STORAGE_KEYS.providerModels),
     providerBaseUrls: getProviderMap(STORAGE_KEYS.providerBaseUrls),
-    preserveMode: loadFromStorage(STORAGE_KEYS.preserveMode) || "0",
     pdfTemplate: loadFromStorage(STORAGE_KEYS.pdfTemplate) || "",
   };
 }
@@ -986,7 +981,6 @@ async function pullSettingsFromServer() {
     // Scalar prefs: only adopt the server value if nothing is set locally yet.
     if (s.provider && !loadFromStorage(STORAGE_KEYS.provider)) saveToStorage(STORAGE_KEYS.provider, s.provider);
     if (s.pdfTemplate && !loadFromStorage(STORAGE_KEYS.pdfTemplate)) saveToStorage(STORAGE_KEYS.pdfTemplate, s.pdfTemplate);
-    if (s.preserveMode != null && loadFromStorage(STORAGE_KEYS.preserveMode) == null) saveToStorage(STORAGE_KEYS.preserveMode, s.preserveMode);
   } catch (err) {
     console.warn("Could not load settings:", err.message);
   }
@@ -1067,6 +1061,19 @@ function renderSavedResumes(list) {
     openBtn.addEventListener("click", () => openSavedResume(r.id));
     actions.appendChild(openBtn);
 
+    const dlBtn = document.createElement("button");
+    dlBtn.className = "btn btn-secondary btn-sm";
+    dlBtn.textContent = "Download";
+    dlBtn.addEventListener("click", () => downloadSavedResume(r.id, dlBtn));
+    actions.appendChild(dlBtn);
+
+    const qaBtn = document.createElement("button");
+    qaBtn.className = "btn btn-secondary btn-sm";
+    qaBtn.textContent = "Q&A";
+    qaBtn.title = "Generate application answers for this resume";
+    qaBtn.addEventListener("click", () => openSavedResumeQA(r.id));
+    actions.appendChild(qaBtn);
+
     const delBtn = document.createElement("button");
     delBtn.className = "saved-delete-btn";
     delBtn.innerHTML = "&#x2715;";
@@ -1121,6 +1128,71 @@ async function deleteSavedResume(id) {
   }
 }
 
+// Build a "{Company} - {Title}.pdf" filename from arbitrary company/title.
+function buildFilenameFrom(company, title, data) {
+  const c = _sanitizeFilenamePart(company || "");
+  const t = _sanitizeFilenamePart(title || "");
+  let stem;
+  if (c && t) stem = `${c} - ${t}`;
+  else if (c) stem = c;
+  else if (t) stem = t;
+  else stem = _sanitizeFilenamePart((data && data.name) || "Resume");
+  return `${stem || "Resume"}.pdf`;
+}
+
+// Render a resume JSON to PDF (using the currently selected template) and download it.
+async function downloadResumePdf(data, company, title) {
+  const pdfData = { ...data, template: loadFromStorage(STORAGE_KEYS.pdfTemplate) || "modern_green" };
+  const res = await authFetch("/api/download-pdf", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(pdfData),
+  });
+  if (!res.ok) {
+    let msg = "PDF download failed";
+    try { msg = (await res.json()).error || msg; } catch {}
+    throw new Error(msg);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = buildFilenameFrom(company, title, data);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// Download one saved resume directly from its card (fetches its full data first).
+async function downloadSavedResume(id, btn) {
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "…";
+  try {
+    const res = await authFetch("/api/resumes/" + encodeURIComponent(id));
+    const json = await res.json();
+    if (!res.ok || json.error) throw new Error(json.error || "Could not load resume.");
+    const rec = json.resume || {};
+    if (!rec.data) throw new Error("This saved resume has no data.");
+    await downloadResumePdf(rec.data, rec.company, rec.title);
+  } catch (err) {
+    showError(err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+// Open a saved resume AND jump to the Application Q&A tab for it.
+async function openSavedResumeQA(id) {
+  await openSavedResume(id);   // loads data + its stored JD into the preview + Q&A context
+  const qaTabBtn = document.querySelector('.tab-btn[data-tab="tab-qa"]');
+  if (qaTabBtn) qaTabBtn.click();
+  const qa = document.getElementById("tab-qa");
+  if (qa) qa.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
 function formatSavedDate(iso) {
   if (!iso) return "";
   try {
@@ -1145,7 +1217,6 @@ function buildTailorFormData(jd) {
   if (model) fd.append("model", model);
   const baseUrl = getActiveBaseUrl();
   if (baseUrl) fd.append("base_url", baseUrl);
-  if (document.getElementById("preserve-mode-checkbox")?.checked) fd.append("preserve_mode", "1");
   fd.append("jd", jd);
   if (resumeFileInput.files.length) fd.append("resume_file", resumeFileInput.files[0]);
   const promptUploadActive = document.getElementById("prompt-upload-mode").classList.contains("active");
@@ -1310,17 +1381,6 @@ function restoreState() {
 
   if (savedJD) document.getElementById("jd-text").value = savedJD;
   if (savedPrompt) document.getElementById("prompt-text").value = savedPrompt;
-
-  // Keyword-swap (preservation) mode — defaults OFF, so the default is full experience
-  // tailoring. Tick it to only swap keywords and keep the original wording/lengths.
-  const preserveBox = document.getElementById("preserve-mode-checkbox");
-  if (preserveBox) {
-    preserveBox.checked = loadFromStorage(STORAGE_KEYS.preserveMode) === "1";
-    preserveBox.addEventListener("change", () => {
-      saveToStorage(STORAGE_KEYS.preserveMode, preserveBox.checked ? "1" : "0");
-      pushSettingsToServer();
-    });
-  }
 
   // One-shot cleanup: drop any leftover cover-letter localStorage from prior versions.
   ["rt_cover_company", "rt_cover_hm", "rt_cover_tone", "rt_cover_body"].forEach((k) => {
