@@ -511,6 +511,7 @@ form.addEventListener("submit", async (e) => {
     saveToStorage(STORAGE_KEYS.jobMeta, lastJobMeta);
     applyJobMetaToFilenameFields();
     renderResults(tailoredData);
+    showTailorWarning(json.warning);
     resultsSection.classList.add("active");
 
     // Persist to the user's private, server-side resume library.
@@ -600,6 +601,19 @@ function refreshFilenameInput() {
     dlTitleInput.value = lastJobMeta.position || "";
   }
   _updateFilenamePreview();
+}
+
+// Show/hide the "model didn't tailor" warning banner above the preview.
+function showTailorWarning(msg) {
+  const el = document.getElementById("tailor-warning");
+  if (!el) return;
+  if (msg) {
+    el.textContent = "⚠ " + msg;
+    el.style.display = "";
+  } else {
+    el.style.display = "none";
+    el.textContent = "";
+  }
 }
 
 // ── Render Results ──
@@ -1472,6 +1486,18 @@ function restoreState() {
   const savedPromptMode = loadFromStorage(STORAGE_KEYS.promptMode);
   const savedJobMeta = loadJSONFromStorage(STORAGE_KEYS.jobMeta);
   if (savedJobMeta) lastJobMeta = normalizeJobMeta(savedJobMeta);
+
+  // One-time: upgrade a stored OpenAI model of "gpt-4o-mini" to "gpt-4o" — mini is too weak
+  // to actually tailor (it copies the resume). Users can switch back if they want cheaper.
+  if (loadFromStorage("rt_openai_model_upgraded") !== "1") {
+    const pm = getProviderMap(STORAGE_KEYS.providerModels);
+    if (!pm.openai || pm.openai === "gpt-4o-mini") {
+      pm.openai = "gpt-4o";
+      saveToStorage(STORAGE_KEYS.providerModels, pm);
+      pushSettingsToServer();
+    }
+    saveToStorage("rt_openai_model_upgraded", "1");
+  }
 
   if (savedProvider && PROVIDER_META[savedProvider]) providerSelect.value = savedProvider;
   updateProviderUI();   // Loads key/model/base_url for the active provider

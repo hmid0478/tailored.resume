@@ -2834,7 +2834,17 @@ def api_tailor():
         if original_title:
             result["title"] = original_title
 
-        return jsonify({"success": True, "data": result, "job_meta": job_meta})
+        # Detect the "model didn't actually tailor" case so the UI can warn the user.
+        warning = ""
+        try:
+            if _experience_mostly_verbatim(result, resume_text):
+                warning = ("The AI returned your experience almost unchanged — it did not tailor it. "
+                           "This usually means the model is too weak: switch to a stronger model "
+                           "(e.g. OpenAI 'gpt-4o', not 'gpt-4o-mini') and tailor again.")
+        except Exception:
+            pass
+
+        return jsonify({"success": True, "data": result, "job_meta": job_meta, "warning": warning})
 
     except ValueError as e:
         traceback.print_exc()
