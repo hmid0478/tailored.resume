@@ -63,7 +63,8 @@
         </div>
         <div class="api-key-group">
           <label for="ai-model">Model</label>
-          <input type="text" id="ai-model" name="rt_ai_model" placeholder="e.g. claude-sonnet-4-5-20250929" autocomplete="off" />
+          <input type="text" id="ai-model" name="rt_ai_model" list="ai-model-list" placeholder="e.g. gpt-4o" autocomplete="off" />
+          <datalist id="ai-model-list"></datalist>
         </div>
         <div class="api-key-group" id="provider-key-group">
           <label for="provider-key" id="provider-key-label">API Key</label>

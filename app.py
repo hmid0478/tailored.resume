@@ -832,11 +832,11 @@ def _build_tailor_user_msg(resume_text: str, prompt_text: str, jd_text: str, det
      experience — but the WORDING must change. A tailored resume that reads the same as the
      original is WRONG. Tailoring only the Summary and leaving Experience unchanged is WRONG.
 7. MARK YOUR CHANGES in EVERY section you rewrote — the Summary, Skills, AND (especially) every
-   Experience bullet, not just the Summary. Wrap in « » (guillemets, U+00AB / U+00BB) every word
-   or phrase you changed, reworded, or added. Example: "«Architected» scalable «React and
-   TypeScript» services «serving 10k+ users»". If an Experience bullet has no « » marks, you did
+   Experience bullet, not just the Summary. Wrap in [[ ]] (guillemets, U+00AB / U+00BB) every word
+   or phrase you changed, reworded, or added. Example: "[[Architected]] scalable [[React and
+   TypeScript]] services [[serving 10k+ users]]". If an Experience bullet has no [[ ]] marks, you did
    not tailor it — go back and rewrite it. Never mark the name, job title, or contact details.
-   Use the exact characters « and », and always close every « with a matching »."""
+   Use the exact characters [[ and ]], and always close every [[ with a matching ]]."""
 
     user_msg = f"""Here are the two inputs:
 
@@ -1368,7 +1368,7 @@ def _experience_mostly_verbatim(resume_json: dict, original_text: str) -> bool:
         return False
     verbatim = 0
     for b in long_bullets:
-        bn = re.sub(r"\s+", " ", b.replace("«", "").replace("»", "")).strip().lower()
+        bn = re.sub(r"\s+", " ", b.replace("[[", "").replace("]]", "")).strip().lower()
         if bn and bn in orig:
             verbatim += 1
     return verbatim >= len(long_bullets) * 0.6
@@ -1456,7 +1456,7 @@ def tailor_resume(
             "You MUST REWRITE every bullet in every role so it foregrounds this job description's "
             "responsibilities, priorities, tools, and exact terminology, using the candidate's real "
             "facts. Keep the SAME number of bullets, but NO bullet may be copied word-for-word from "
-            "the original. Wrap the words you change in « ». Rewrite the full resume now."
+            "the original. Wrap the words you change in [[ ]]. Rewrite the full resume now."
         )
         try:
             retry = _do_tailor_call(api_key, resume_text, prompt_text, jd_text, provider,
@@ -1516,9 +1516,9 @@ def _clean_text(text) -> str:
             return url
         return f"{display} ({url})"
     text = _MD_LINK_RE.sub(_unwrap, text)
+    # Strip the [[ ]] change-highlight markers (preview only, must not appear in the PDF).
+    text = text.replace("[[", "").replace("]]", "")
     cleaned = (text
-        .replace("\u00ab", "")    # \u00ab change-highlight marker (preview only) \u2014 strip from PDF
-        .replace("\u00bb", "")    # \u00bb  ditto
         .replace("\u2013", "-")   # en dash
         .replace("\u2014", "-")   # em dash
         .replace("\u2018", "'")   # left single quote
@@ -2922,7 +2922,7 @@ def api_answer_questions():
             edu = resume_json.get("education", {})
             if edu:
                 resume_lines.append(f"\nEducation: {edu.get('degree', '')} — {edu.get('school', '')}")
-        resume_text = "\n".join(resume_lines).replace("«", "").replace("»", "")
+        resume_text = "\n".join(resume_lines).replace("[[", "").replace("]]", "")
 
         system_prompt = """You are an expert job application assistant. You help candidates write compelling,
 authentic answers to job application questions. You have deep context about:

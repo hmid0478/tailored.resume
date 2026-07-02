@@ -87,16 +87,17 @@ function applyJobMetaToFilenameFields() {
   _updateFilenamePreview();
 }
 
-// Provider metadata: default model, key placeholder, whether base_url is shown.
+// Provider metadata: default model, key placeholder, whether base_url is shown, and a
+// list of suggested models (shown in the Model dropdown for that provider).
 const PROVIDER_META = {
-  anthropic:  { label: "Anthropic API Key", model: "claude-sonnet-4-5-20250929",   keyPh: "sk-ant-api03-...",  needsBase: false, defaultBase: "" },
-  gemini:     { label: "Gemini API Key",    model: "gemini-2.5-flash-lite",        keyPh: "AIza...",           needsBase: false, defaultBase: "" },
-  openai:     { label: "OpenAI API Key",    model: "gpt-4o-mini",                  keyPh: "sk-...",            needsBase: false, defaultBase: "" },
-  openrouter: { label: "OpenRouter API Key", model: "openrouter/auto",             keyPh: "sk-or-...",         needsBase: false, defaultBase: "" },
-  groq:       { label: "Groq API Key",      model: "llama-3.3-70b-versatile",      keyPh: "gsk_...",           needsBase: false, defaultBase: "" },
-  together:   { label: "Together AI API Key", model: "meta-llama/Llama-3.3-70B-Instruct-Turbo", keyPh: "...",  needsBase: false, defaultBase: "" },
-  ollama:     { label: "API Key (optional)", model: "llama3.1",                    keyPh: "(leave blank for local)", needsBase: true, defaultBase: "http://localhost:11434/v1" },
-  openai_compatible: { label: "API Key",    model: "",                             keyPh: "...",               needsBase: true, defaultBase: "http://localhost:1234/v1" },
+  anthropic:  { label: "Anthropic API Key", model: "claude-sonnet-4-5-20250929",   keyPh: "sk-ant-api03-...",  needsBase: false, defaultBase: "", models: ["claude-sonnet-4-5-20250929", "claude-opus-4-1", "claude-3-5-haiku-latest"] },
+  gemini:     { label: "Gemini API Key",    model: "gemini-2.5-flash",             keyPh: "AIza...",           needsBase: false, defaultBase: "", models: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"] },
+  openai:     { label: "OpenAI API Key",    model: "gpt-4o",                       keyPh: "sk-...",            needsBase: false, defaultBase: "", models: ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4-turbo"] },
+  openrouter: { label: "OpenRouter API Key", model: "openrouter/auto",             keyPh: "sk-or-...",         needsBase: false, defaultBase: "", models: ["openrouter/auto", "openai/gpt-4o", "anthropic/claude-3.5-sonnet", "google/gemini-2.5-flash"] },
+  groq:       { label: "Groq API Key",      model: "llama-3.3-70b-versatile",      keyPh: "gsk_...",           needsBase: false, defaultBase: "", models: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"] },
+  together:   { label: "Together AI API Key", model: "meta-llama/Llama-3.3-70B-Instruct-Turbo", keyPh: "...",  needsBase: false, defaultBase: "", models: ["meta-llama/Llama-3.3-70B-Instruct-Turbo", "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"] },
+  ollama:     { label: "API Key (optional)", model: "llama3.1",                    keyPh: "(leave blank for local)", needsBase: true, defaultBase: "http://localhost:11434/v1", models: ["llama3.1", "llama3.2", "mistral", "qwen2.5"] },
+  openai_compatible: { label: "API Key",    model: "",                             keyPh: "...",               needsBase: true, defaultBase: "http://localhost:1234/v1", models: [] },
 };
 
 // All app state is namespaced per signed-in user (see USER_PREFIX).
@@ -336,6 +337,17 @@ function updateProviderUI() {
   keyInput.value = keys[provider] || "";
   modelInput.value = models[provider] || meta.model || "";
   modelInput.placeholder = meta.model || "model name";
+
+  // Populate the Model dropdown with this provider's suggested models.
+  const dl = document.getElementById("ai-model-list");
+  if (dl) {
+    dl.innerHTML = "";
+    (meta.models || []).forEach((m) => {
+      const opt = document.createElement("option");
+      opt.value = m;
+      dl.appendChild(opt);
+    });
+  }
 
   // Base URL: only show for providers that need a custom endpoint
   if (meta.needsBase) {
@@ -734,10 +746,10 @@ function buildResumeHTML(d) {
     }
   }
 
-  // Render the AI's change markers («…») as yellow highlights. Markers only appear
+  // Render the AI's change markers ([[…]]) as yellow highlights. Markers only appear
   // inside text fields (already HTML-escaped by esc), so this is safe on the final HTML.
-  html = html.replace(/«([\s\S]*?)»/g, '<mark class="tailor-change">$1</mark>');
-  html = html.replace(/[«»]/g, "");  // drop any unmatched stray markers
+  html = html.replace(/\[\[([\s\S]*?)\]\]/g, '<mark class="tailor-change">$1</mark>');
+  html = html.replace(/\[\[|\]\]/g, "");  // drop any unmatched stray markers
   return html;
 }
 
