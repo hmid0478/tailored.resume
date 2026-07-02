@@ -510,11 +510,10 @@ FOLLOW THESE RULES WITH ZERO EXCEPTIONS:
     c) Include at least ONE metric per bullet (%, #, scale, time saved) IF the original bullet had one — never invent numbers
     d) Connect the action to BUSINESS IMPACT (not just technical output)
     e) Use JD's EXACT phrases where natural
-    f) If a bullet doesn't obviously serve this JD, REFRAME it to connect to the JD — NEVER delete it
-    g) KEEP EVERY BULLET from the original resume, for EVERY role (recent AND older). Do NOT
-       drop, merge, trim, condense, or summarize bullets. The tailored resume must contain the
-       SAME number of bullets per role as the original — reword each one, but remove none.
-    h) Most impactful/JD-aligned bullets go FIRST within each role (reorder — never remove)
+    f) REWRITE every bullet — never copy a bullet word-for-word from the original
+    g) Keep a similar number of bullets per role (don't gut the resume), and never invent
+       experience — but the WORDING of every bullet must change to target this JD
+    h) Most impactful/JD-aligned bullets go FIRST within each role
 
 3.6 — EXPERIENCE ORDERING WITHIN EACH ROLE
     Reorder bullets within each job to match JD priority:
@@ -562,7 +561,7 @@ After rewriting, verify ALL of the following:
     [ ] Contact info at the very top (not in a sidebar)
 
 4.3 — LENGTH & DENSITY
-    [ ] The resume should be as long as the original — preserve ALL content and bullets
+    [ ] Keep roughly the same length as the original — but REWRITE the content, don't copy it
     [ ] No single bullet exceeds 3 lines
     [ ] White space is adequate for readability
     [ ] Most recent 2 roles get the most space (60% of experience section)
@@ -626,13 +625,13 @@ Before delivering, verify:
     - "large-scale systems" -> "systems handling 5M+ records/month"
 
 5.6 — THE RECENCY BIAS CHECK
-    Most recent role should have the STRONGEST alignment. Do NOT condense, trim, or drop
-    bullets from older roles — keep ALL of them, just reword to align with the JD.
+    Most recent role should have the STRONGEST alignment. Keep every role and a similar set of
+    bullets, and REWORD all of them to align with the JD.
 
-5.7 — THE COMPLETENESS CHECK (HARD REQUIREMENT)
-    Before finalizing, confirm the tailored resume contains EVERY work experience entry and
-    EVERY bullet that was in the original resume. If any bullet is missing, add it back
-    (reworded to fit the JD). The output must never be shorter than the original.
+5.7 — THE TAILORING CHECK (HARD REQUIREMENT)
+    Before finalizing, confirm you actually REWROTE the content — the Summary and the Experience
+    bullets must read differently from the original and target this JD. If the tailored resume
+    reads the same as the original, you FAILED — rewrite it.
 
 ================================================================================
 CONSTRAINTS & ANTI-PATTERNS
@@ -825,15 +824,13 @@ def _build_tailor_user_msg(resume_text: str, prompt_text: str, jd_text: str, det
 5. JOB IDENTITY: extract the hiring COMPANY name and the JOB TITLE from the JOB
    DESCRIPTION (not the resume). Put them in "detected_company" and "detected_job_title".
    If one is not stated, use an empty string for it.
-6. REWRITE EVERY EXPERIENCE BULLET — this is the MOST IMPORTANT rule, do not skip it:
-   - The tailored resume MUST keep the SAME NUMBER of bullets per role as the original (never
-     drop, merge, omit, summarize, or trim any bullet).
-   - BUT you MUST REWRITE every single bullet in every role — do NOT copy any bullet word-for-word
-     from the original. Copying an experience bullet verbatim is a FAILURE.
-   - Re-express each bullet to foreground THIS job description's responsibilities, priorities,
-     tools, and exact terminology, using only the candidate's real facts. Tailoring only the
-     Summary while leaving the Experience bullets unchanged is WRONG — the Experience section is
-     the most important part to tailor.
+6. TAILOR THE WHOLE RESUME — do NOT return it unchanged (this is the MOST IMPORTANT rule):
+   - REWRITE the Summary AND every Experience bullet in every role so they foreground THIS job
+     description's responsibilities, priorities, tools, and exact terminology, using only the
+     candidate's real facts. Copying any bullet word-for-word from the original is a FAILURE.
+   - Keep all the same roles/companies and a similar number of bullets, and never invent
+     experience — but the WORDING must change. A tailored resume that reads the same as the
+     original is WRONG. Tailoring only the Summary and leaving Experience unchanged is WRONG.
 7. MARK YOUR CHANGES in EVERY section you rewrote — the Summary, Skills, AND (especially) every
    Experience bullet, not just the Summary. Wrap in « » (guillemets, U+00AB / U+00BB) every word
    or phrase you changed, reworded, or added. Example: "«Architected» scalable «React and
@@ -1445,33 +1442,10 @@ def tailor_resume(
             except Exception as e:
                 print(f"[tailor-guard] retry failed ({e}); keeping first response.")
 
-    # Bullet-loss guard: if the model clearly dropped bullet points that the original
-    # resume had, retry once demanding every bullet back. Conservative — only fires when
-    # the source has a solid bullet count and the output lost more than ~25% of them.
-    src_bullets = _count_source_bullets(resume_text)
-    got_bullets = _count_result_bullets(data)
-    if src_bullets >= 6 and got_bullets < src_bullets * 0.75:
-        print(f"[tailor-guard] bullets dropped ({src_bullets} -> {got_bullets}); retrying to restore them.")
-        extra = (
-            f"MANDATORY FIX — the previous attempt DROPPED bullet points. The original resume has "
-            f"about {src_bullets} bullet points, but your output had only {got_bullets}. You MUST "
-            "include EVERY bullet from EVERY role in the original resume — do not drop, merge, trim, "
-            "or summarize any. Reword them to fit the job description if helpful, but keep them ALL. "
-            "Return the full resume with every bullet restored."
-        )
-        try:
-            retry = _do_tailor_call(api_key, resume_text, prompt_text, jd_text, provider,
-                                    detected_sections, model, base_url, extra_instruction=extra)
-            if _count_result_bullets(retry) > got_bullets and (
-                not detected_sections or _has_all_sections(retry, data)):
-                data = retry
-            else:
-                print("[tailor-guard] bullet retry didn't improve; keeping previous response.")
-        except Exception as e:
-            print(f"[tailor-guard] bullet retry failed ({e}); keeping previous response.")
-
     # Tailoring guard: if most experience bullets were copied VERBATIM (the model only
-    # rewrote the Summary), retry once demanding a full experience rewrite.
+    # rewrote the Summary, or returned the resume basically unchanged), retry once demanding
+    # a full rewrite. This replaces the old bullet-preservation guard, which could push the
+    # model to copy the original bullets back in.
     if _experience_mostly_verbatim(data, resume_text):
         print("[tailor-guard] experience looks copied verbatim; retrying with a hard rewrite demand.")
         extra = (
