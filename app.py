@@ -825,18 +825,21 @@ def _build_tailor_user_msg(resume_text: str, prompt_text: str, jd_text: str, det
 5. JOB IDENTITY: extract the hiring COMPANY name and the JOB TITLE from the JOB
    DESCRIPTION (not the resume). Put them in "detected_company" and "detected_job_title".
    If one is not stated, use an empty string for it.
-6. PRESERVE ALL EXPERIENCE CONTENT (non-negotiable): include EVERY work-experience entry and
-   EVERY bullet from the original resume. Never drop, merge, omit, summarize, or trim bullets —
-   the tailored resume must have AT LEAST as many bullets per role as the original. REWRITE each
-   bullet to reflect the JD's priorities, responsibilities, and exact terminology (this is how
-   you tailor the experience), but keep every one of them. The output must not be shorter than
-   the original resume.
-7. MARK YOUR CHANGES: wrap in « » (guillemet characters, U+00AB and U+00BB) every word or
-   phrase you changed, reworded, or newly added versus the original resume — in the Summary,
-   Skills, and Experience bullets. Example: "«Architected» scalable «React and TypeScript»
-   services «serving 10k+ users»". Do NOT mark text you left unchanged. NEVER mark the name,
-   job title, or any contact detail. Use the exact characters « and » (not quotes or brackets),
-   and always close every « with a matching »."""
+6. REWRITE EVERY EXPERIENCE BULLET — this is the MOST IMPORTANT rule, do not skip it:
+   - The tailored resume MUST keep the SAME NUMBER of bullets per role as the original (never
+     drop, merge, omit, summarize, or trim any bullet).
+   - BUT you MUST REWRITE every single bullet in every role — do NOT copy any bullet word-for-word
+     from the original. Copying an experience bullet verbatim is a FAILURE.
+   - Re-express each bullet to foreground THIS job description's responsibilities, priorities,
+     tools, and exact terminology, using only the candidate's real facts. Tailoring only the
+     Summary while leaving the Experience bullets unchanged is WRONG — the Experience section is
+     the most important part to tailor.
+7. MARK YOUR CHANGES in EVERY section you rewrote — the Summary, Skills, AND (especially) every
+   Experience bullet, not just the Summary. Wrap in « » (guillemets, U+00AB / U+00BB) every word
+   or phrase you changed, reworded, or added. Example: "«Architected» scalable «React and
+   TypeScript» services «serving 10k+ users»". If an Experience bullet has no « » marks, you did
+   not tailor it — go back and rewrite it. Never mark the name, job title, or contact details.
+   Use the exact characters « and », and always close every « with a matching »."""
 
     user_msg = f"""Here are the two inputs:
 
@@ -847,7 +850,7 @@ def _build_tailor_user_msg(resume_text: str, prompt_text: str, jd_text: str, det
 {jd_text}
 
 === INSTRUCTIONS ===
-Apply every phase from your system prompt. AGGRESSIVELY REWRITE the EXPERIENCE section: rewrite EVERY bullet in EVERY role to match this specific job description — its responsibilities, priorities, and exact terminology — while keeping all of the candidate's real facts and every bullet. The experience must read as tailored to THIS job, not generic.
+Apply every phase from your system prompt. Your #1 job is to REWRITE THE EXPERIENCE SECTION: rewrite EVERY bullet in EVERY role to match this specific job description — its responsibilities, priorities, and exact terminology — while keeping all of the candidate's real facts and every bullet. Do NOT copy experience bullets verbatim, and do NOT tailor only the Summary. The experience bullets must read as written for THIS job.
 
 {rules_block}
 
@@ -1343,6 +1346,36 @@ def _count_source_bullets(resume_text: str) -> int:
     return n
 
 
+def _experience_mostly_verbatim(resume_json: dict, original_text: str) -> bool:
+    """True if most EXPERIENCE bullets in the tailored resume appear verbatim in the
+    original resume text — i.e. the model copied them instead of tailoring (a common
+    failure where only the Summary gets rewritten)."""
+    orig = re.sub(r"\s+", " ", original_text or "").lower()
+    if not orig:
+        return False
+    bullets = []
+    for s in (resume_json.get("sections") or []):
+        if not isinstance(s, dict):
+            continue
+        heading = (s.get("heading", "") or "").lower()
+        if s.get("type") == "experience" or "experience" in heading or "employment" in heading:
+            items = s.get("items")
+            if isinstance(items, dict):
+                items = [items]
+            for it in (items or []):
+                if isinstance(it, dict):
+                    bullets += [b for b in (it.get("bullets") or []) if isinstance(b, str)]
+    long_bullets = [b for b in bullets if len(b.strip()) >= 30]
+    if len(long_bullets) < 4:
+        return False
+    verbatim = 0
+    for b in long_bullets:
+        bn = re.sub(r"\s+", " ", b.replace("«", "").replace("»", "")).strip().lower()
+        if bn and bn in orig:
+            verbatim += 1
+    return verbatim >= len(long_bullets) * 0.6
+
+
 def _do_tailor_call(api_key, resume_text, prompt_text, jd_text, provider,
                     detected_sections, model, base_url, extra_instruction=""):
     prompt = _build_tailor_user_msg(resume_text, prompt_text, jd_text, detected_sections)
@@ -1436,6 +1469,29 @@ def tailor_resume(
                 print("[tailor-guard] bullet retry didn't improve; keeping previous response.")
         except Exception as e:
             print(f"[tailor-guard] bullet retry failed ({e}); keeping previous response.")
+
+    # Tailoring guard: if most experience bullets were copied VERBATIM (the model only
+    # rewrote the Summary), retry once demanding a full experience rewrite.
+    if _experience_mostly_verbatim(data, resume_text):
+        print("[tailor-guard] experience looks copied verbatim; retrying with a hard rewrite demand.")
+        extra = (
+            "MANDATORY FIX — you COPIED the experience bullets verbatim instead of tailoring them. "
+            "You MUST REWRITE every bullet in every role so it foregrounds this job description's "
+            "responsibilities, priorities, tools, and exact terminology, using the candidate's real "
+            "facts. Keep the SAME number of bullets, but NO bullet may be copied word-for-word from "
+            "the original. Wrap the words you change in « ». Rewrite the full resume now."
+        )
+        try:
+            retry = _do_tailor_call(api_key, resume_text, prompt_text, jd_text, provider,
+                                    detected_sections, model, base_url, extra_instruction=extra)
+            if (not _experience_mostly_verbatim(retry, resume_text)
+                    and (not detected_sections or _has_all_sections(retry, data))
+                    and _count_result_bullets(retry) >= _count_result_bullets(data) * 0.9):
+                data = retry
+            else:
+                print("[tailor-guard] verbatim retry didn't improve; keeping previous response.")
+        except Exception as e:
+            print(f"[tailor-guard] verbatim retry failed ({e}); keeping previous response.")
 
     return data
 
@@ -2356,7 +2412,7 @@ def api_login():
     if not user or not verify_password(password, user.get("password_hash", "")):
         return jsonify({"error": "Invalid email or password."}), 401
     token = make_token(email, "user")
-    return jsonify({"success": True, "token": token, "email": email})
+    return jsonify({"success": True, "token": token, "email": email, "name": user.get("name", "")})
 
 
 @app.route("/api/me", methods=["GET"])
@@ -2407,6 +2463,7 @@ def api_admin_create_user():
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()
     password = data.get("password") or ""
+    name = (data.get("name") or "").strip()
     if not email or "@" not in email:
         return jsonify({"error": "A valid email is required."}), 400
     if len(password) < 6:
@@ -2414,12 +2471,40 @@ def api_admin_create_user():
     if email == ADMIN_EMAIL:
         return jsonify({"error": "That email is reserved for the admin account."}), 400
     try:
-        STORE.create_user(email, hash_password(password))
+        # Store the plaintext password too so the admin can view/change it later.
+        STORE.create_user(email, hash_password(password), name=name, password_plain=password)
     except ValueError as e:
         return jsonify({"error": str(e)}), 409
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": f"Could not create user: {e}"}), 500
+    return jsonify({"success": True, "email": email})
+
+
+@app.route("/api/admin/users/<path:email>", methods=["PUT"])
+@require_admin
+def api_admin_update_user(email):
+    """Change a user's name and/or password."""
+    email = (email or "").strip().lower()
+    data = request.get_json(silent=True) or {}
+    updates = {}
+    if "name" in data:
+        updates["name"] = (data.get("name") or "").strip()
+    if data.get("password"):
+        pw = data["password"]
+        if len(pw) < 6:
+            return jsonify({"error": "Password must be at least 6 characters."}), 400
+        updates["password"] = pw
+        updates["password_hash"] = hash_password(pw)
+    if not updates:
+        return jsonify({"error": "Nothing to update."}), 400
+    try:
+        if not STORE.get_user(email):
+            return jsonify({"error": "User not found."}), 404
+        STORE.update_user(email, updates)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"Could not update user: {e}"}), 500
     return jsonify({"success": True, "email": email})
 
 

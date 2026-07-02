@@ -37,6 +37,7 @@
 
       localStorage.setItem("rt_auth_token", json.token);
       localStorage.setItem("rt_auth_email", json.email);
+      localStorage.setItem("rt_auth_name", json.name || "");
       window.location.replace("/");
     } catch (err) {
       showError(err.message);

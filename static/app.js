@@ -937,12 +937,15 @@ function renderQAResults(answers) {
 // ── User bar / logout ──
 (function initUserBar() {
   const emailEl = document.getElementById("user-bar-email");
-  if (emailEl) emailEl.textContent = AUTH_EMAIL || "";
+  // Prefer the user's name, fall back to their email.
+  const displayName = (localStorage.getItem("rt_auth_name") || "").trim() || AUTH_EMAIL || "";
+  if (emailEl) emailEl.textContent = displayName;
   const logoutBtn = document.getElementById("logout-btn");
   if (logoutBtn) {
     logoutBtn.addEventListener("click", () => {
       localStorage.removeItem("rt_auth_token");
       localStorage.removeItem("rt_auth_email");
+      localStorage.removeItem("rt_auth_name");
       window.location.replace("/login");
     });
   }

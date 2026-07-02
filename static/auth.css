@@ -305,3 +305,22 @@ body::before {
   vertical-align: middle;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Admin user table: inline editable name / password */
+.user-edit-input {
+  width: 100%;
+  min-width: 120px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.85rem;
+  padding: 7px 10px;
+  font-family: inherit;
+}
+.user-edit-input.mono { font-family: 'JetBrains Mono', monospace; font-size: 0.82rem; }
+.user-edit-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+.user-table td { vertical-align: middle; }
+
+/* Wider admin shell to fit the name/email/password columns */
+.admin-shell { max-width: 1040px; }

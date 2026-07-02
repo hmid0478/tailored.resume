@@ -120,6 +120,7 @@
   createForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     setMsg(createMsg, "", "");
+    const name = document.getElementById("new-name").value.trim();
     const email = document.getElementById("new-email").value.trim();
     const password = document.getElementById("new-password").value;
     createBtn.disabled = true;
@@ -128,7 +129,7 @@
       const res = await adminFetch("/api/admin/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ name, email, password }),
       });
       const json = await res.json();
       if (!res.ok || json.error) throw new Error(json.error || "Could not create user.");
@@ -164,36 +165,84 @@
     }
     const table = document.createElement("table");
     table.className = "user-table";
-    table.innerHTML = "<thead><tr><th>Email</th><th>Created</th><th></th></tr></thead>";
+    table.innerHTML = "<thead><tr><th>Name</th><th>Email</th><th>Password</th><th></th></tr></thead>";
     const tbody = document.createElement("tbody");
 
     users.forEach((u) => {
       const tr = document.createElement("tr");
 
+      // Name (editable)
+      const tdName = document.createElement("td");
+      const nameInput = document.createElement("input");
+      nameInput.className = "user-edit-input";
+      nameInput.value = u.name || "";
+      nameInput.placeholder = "—";
+      tdName.appendChild(nameInput);
+      tr.appendChild(tdName);
+
+      // Email (the key — read only) + created date under it
       const tdEmail = document.createElement("td");
-      tdEmail.className = "user-email";
-      tdEmail.textContent = u.email;
+      tdEmail.innerHTML =
+        `<div class="user-email">${escapeHtml(u.email)}</div>` +
+        `<div class="user-date">${escapeHtml(formatDate(u.created_at))}</div>`;
       tr.appendChild(tdEmail);
 
-      const tdDate = document.createElement("td");
-      tdDate.className = "user-date";
-      tdDate.textContent = formatDate(u.created_at);
-      tr.appendChild(tdDate);
+      // Password (visible + editable)
+      const tdPass = document.createElement("td");
+      const passInput = document.createElement("input");
+      passInput.className = "user-edit-input mono";
+      passInput.value = u.password || "";
+      passInput.placeholder = "(set a password)";
+      tdPass.appendChild(passInput);
+      tr.appendChild(tdPass);
 
+      // Actions
       const tdAct = document.createElement("td");
       tdAct.style.textAlign = "right";
+      tdAct.style.whiteSpace = "nowrap";
+
+      const save = document.createElement("button");
+      save.className = "btn btn-ghost";
+      save.textContent = "Save";
+      save.addEventListener("click", () => saveUser(u.email, nameInput.value.trim(), passInput.value, save));
+      tdAct.appendChild(save);
+
       const del = document.createElement("button");
       del.className = "btn btn-danger";
       del.textContent = "Delete";
+      del.style.marginLeft = "6px";
       del.addEventListener("click", () => deleteUser(u.email, del));
       tdAct.appendChild(del);
-      tr.appendChild(tdAct);
 
+      tr.appendChild(tdAct);
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
     usersContainer.innerHTML = "";
     usersContainer.appendChild(table);
+  }
+
+  async function saveUser(email, name, password, btn) {
+    const body = { name };
+    if (password && password.trim()) body.password = password.trim();
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "Saving…";
+    try {
+      const res = await adminFetch("/api/admin/users/" + encodeURIComponent(email), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json();
+      if (!res.ok || json.error) throw new Error(json.error || "Could not update user.");
+      btn.textContent = "Saved ✓";
+      setTimeout(() => { btn.textContent = label; btn.disabled = false; }, 1200);
+    } catch (err) {
+      alert(err.message);
+      btn.textContent = label;
+      btn.disabled = false;
+    }
   }
 
   async function deleteUser(email, btn) {
@@ -248,7 +297,7 @@
   }
 
   // ── Boot ──
-  hardenAgainstAutofill(["admin-email", "admin-password", "new-email", "new-password"]);
+  hardenAgainstAutofill(["admin-email", "admin-password", "new-name", "new-email", "new-password"]);
   if (token()) {
     showDash();
   } else {

@@ -84,14 +84,24 @@ class RedisStore:
             return None
         return json.loads(raw)
 
-    def create_user(self, email: str, password_hash: str) -> dict:
+    def create_user(self, email: str, password_hash: str, name: str = "", password_plain: str = "") -> dict:
         email = _norm_email(email)
         if self.get_user(email):
             raise ValueError("A user with that email already exists.")
-        record = {"email": email, "password_hash": password_hash, "created_at": _now_iso()}
+        record = {"email": email, "name": name, "password_hash": password_hash,
+                  "password": password_plain, "created_at": _now_iso()}
         self._cmd("SET", f"user:{email}", json.dumps(record))
         self._cmd("SADD", "users", email)
         return record
+
+    def update_user(self, email: str, updates: dict):
+        email = _norm_email(email)
+        user = self.get_user(email)
+        if not user:
+            return None
+        user.update(updates)
+        self._cmd("SET", f"user:{email}", json.dumps(user))
+        return user
 
     def list_users(self) -> list:
         emails = self._cmd("SMEMBERS", "users") or []
@@ -99,7 +109,8 @@ class RedisStore:
         for e in emails:
             u = self.get_user(e)
             if u:
-                out.append({"email": u["email"], "created_at": u.get("created_at", "")})
+                out.append({"email": u["email"], "name": u.get("name", ""),
+                            "password": u.get("password", ""), "created_at": u.get("created_at", "")})
         out.sort(key=lambda u: u.get("created_at", ""))
         return out
 
@@ -223,21 +234,35 @@ class JSONFileStore:
         with self._lock:
             return self._read()["users"].get(email)
 
-    def create_user(self, email: str, password_hash: str) -> dict:
+    def create_user(self, email: str, password_hash: str, name: str = "", password_plain: str = "") -> dict:
         email = _norm_email(email)
         with self._lock:
             data = self._read()
             if email in data["users"]:
                 raise ValueError("A user with that email already exists.")
-            record = {"email": email, "password_hash": password_hash, "created_at": _now_iso()}
+            record = {"email": email, "name": name, "password_hash": password_hash,
+                      "password": password_plain, "created_at": _now_iso()}
             data["users"][email] = record
             self._write(data)
             return record
 
+    def update_user(self, email: str, updates: dict):
+        email = _norm_email(email)
+        with self._lock:
+            data = self._read()
+            user = data["users"].get(email)
+            if not user:
+                return None
+            user.update(updates)
+            self._write(data)
+            return user
+
     def list_users(self) -> list:
         with self._lock:
             users = self._read()["users"].values()
-        out = [{"email": u["email"], "created_at": u.get("created_at", "")} for u in users]
+        out = [{"email": u["email"], "name": u.get("name", ""),
+                "password": u.get("password", ""), "created_at": u.get("created_at", "")}
+               for u in users]
         out.sort(key=lambda u: u.get("created_at", ""))
         return out
 
