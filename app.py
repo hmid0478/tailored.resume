@@ -1002,7 +1002,7 @@ def _split_system_user(prompt: str) -> tuple[str, str]:
     return "", prompt
 
 
-def _call_anthropic(api_key: str, model: str, prompt: str, max_tokens: int, json_mode: bool, base_url: str | None) -> str:
+def _call_anthropic(api_key: str, model: str, prompt: str, max_tokens: int, json_mode: bool, base_url: str | None, temperature: float = 0) -> str:
     import anthropic
     client = anthropic.Anthropic(api_key=api_key, base_url=base_url) if base_url else anthropic.Anthropic(api_key=api_key)
     system_text, user_text = _split_system_user(prompt)
@@ -1011,7 +1011,7 @@ def _call_anthropic(api_key: str, model: str, prompt: str, max_tokens: int, json
     kwargs = {
         "model": model,
         "max_tokens": max_tokens,
-        "temperature": 0,
+        "temperature": temperature,
         "messages": [{"role": "user", "content": user_text}],
     }
     if system_blocks:
@@ -1020,11 +1020,11 @@ def _call_anthropic(api_key: str, model: str, prompt: str, max_tokens: int, json
     return message.content[0].text.strip()
 
 
-def _call_gemini(api_key: str, model: str, prompt: str, max_tokens: int, json_mode: bool, base_url: str | None) -> str:
+def _call_gemini(api_key: str, model: str, prompt: str, max_tokens: int, json_mode: bool, base_url: str | None, temperature: float = 0) -> str:
     from google import genai
     from google.genai import types
     client = genai.Client(api_key=api_key)
-    config_kwargs = {"max_output_tokens": max_tokens, "temperature": 0}
+    config_kwargs = {"max_output_tokens": max_tokens, "temperature": temperature}
     if json_mode:
         config_kwargs["response_mime_type"] = "application/json"
     response = client.models.generate_content(
@@ -1035,7 +1035,7 @@ def _call_gemini(api_key: str, model: str, prompt: str, max_tokens: int, json_mo
     return (response.text or "").strip()
 
 
-def _call_openai_compatible(api_key: str, model: str, prompt: str, max_tokens: int, json_mode: bool, base_url: str) -> str:
+def _call_openai_compatible(api_key: str, model: str, prompt: str, max_tokens: int, json_mode: bool, base_url: str, temperature: float = 0) -> str:
     """Works for OpenAI, OpenRouter, Groq, Together, Ollama, LM Studio, any OpenAI-compatible endpoint."""
     from openai import OpenAI
     # Ollama's OpenAI shim accepts any string as api_key; pass a placeholder if missing.
@@ -1049,7 +1049,7 @@ def _call_openai_compatible(api_key: str, model: str, prompt: str, max_tokens: i
         "model": model,
         "messages": messages,
         "max_tokens": max_tokens,
-        "temperature": 0,
+        "temperature": temperature,
     }
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
@@ -1142,6 +1142,7 @@ def call_ai(
     model: str | None = None,
     base_url: str | None = None,
     json_mode: bool = True,
+    temperature: float = 0,
 ) -> str:
     """Route to the correct AI provider and return raw text.
 
@@ -1163,18 +1164,18 @@ def call_ai(
 
     def _dispatch():
         if provider == "anthropic":
-            return _call_anthropic(api_key, chosen_model, prompt, max_tokens, json_mode, base_url)
+            return _call_anthropic(api_key, chosen_model, prompt, max_tokens, json_mode, base_url, temperature)
         if provider == "gemini":
-            return _call_gemini(api_key, chosen_model, prompt, max_tokens, json_mode, base_url)
+            return _call_gemini(api_key, chosen_model, prompt, max_tokens, json_mode, base_url, temperature)
         if provider in OPENAI_COMPATIBLE_BASE_URLS:
             url = base_url or OPENAI_COMPATIBLE_BASE_URLS[provider]
-            return _call_openai_compatible(api_key, chosen_model, prompt, max_tokens, json_mode, url)
+            return _call_openai_compatible(api_key, chosen_model, prompt, max_tokens, json_mode, url, temperature)
         if provider == "openai_compatible":
             if not base_url:
                 raise ValueError("openai_compatible provider requires a base_url.")
             if not chosen_model:
                 raise ValueError("openai_compatible provider requires a model name.")
-            return _call_openai_compatible(api_key, chosen_model, prompt, max_tokens, json_mode, base_url)
+            return _call_openai_compatible(api_key, chosen_model, prompt, max_tokens, json_mode, base_url, temperature)
         raise ValueError(f"Unknown AI provider: {provider}")
 
     # Retry loop for transient provider errors (Gemini "high demand" / OpenAI 503 / etc.)
@@ -1378,7 +1379,9 @@ def _do_tailor_call(api_key, resume_text, prompt_text, jd_text, provider,
     prompt = _build_tailor_user_msg(resume_text, prompt_text, jd_text, detected_sections)
     if extra_instruction:
         prompt += "\n\n" + extra_instruction
-    raw = call_ai(provider, api_key, prompt, max_tokens=16000, model=model, base_url=base_url, json_mode=True)
+    # A little temperature makes the model actually rewrite the resume rather than echo it.
+    raw = call_ai(provider, api_key, prompt, max_tokens=16000, model=model, base_url=base_url,
+                  json_mode=True, temperature=0.4)
     raw = _strip_code_fences(raw)
     try:
         data = _safe_json_loads(raw)
