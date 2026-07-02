@@ -969,13 +969,12 @@ def _safe_json_loads(raw: str):
 # ─────────────────────────────────────────────
 
 # Default model per provider. Frontend can override via `model` form field.
+# These default to STRONGER models — weaker/cheaper ones (gpt-4o-mini, flash-lite) tend
+# to copy the resume instead of tailoring it.
 PROVIDER_DEFAULTS = {
     "anthropic": "claude-sonnet-4-5-20250929",
-    # gemini-2.5-flash-lite has a 1,500/day free-tier quota (vs. 20/day for flash).
-    # The ATS pipeline does 4-6 calls per tailor, so flash burns the daily budget in
-    # 3-4 runs. flash-lite is plenty fast and survives heavier use on the free tier.
-    "gemini":    "gemini-2.5-flash-lite",
-    "openai":    "gpt-4o-mini",
+    "gemini":    "gemini-2.5-flash",
+    "openai":    "gpt-4o",
     "openrouter": "openrouter/auto",
     "groq":      "llama-3.3-70b-versatile",
     "together":  "meta-llama/Llama-3.3-70B-Instruct-Turbo",
@@ -2835,16 +2834,18 @@ def api_tailor():
             result["title"] = original_title
 
         # Detect the "model didn't actually tailor" case so the UI can warn the user.
+        effective_model = (model or PROVIDER_DEFAULTS.get(provider, "")) or "(provider default)"
         warning = ""
         try:
             if _experience_mostly_verbatim(result, resume_text):
-                warning = ("The AI returned your experience almost unchanged — it did not tailor it. "
-                           "This usually means the model is too weak: switch to a stronger model "
-                           "(e.g. OpenAI 'gpt-4o', not 'gpt-4o-mini') and tailor again.")
+                warning = (f"The AI returned your experience almost unchanged — it did not tailor it. "
+                           f"The model used was '{effective_model}'. If that is 'gpt-4o-mini' (or another "
+                           f"small model), switch to a stronger one like 'gpt-4o' and tailor again.")
         except Exception:
             pass
 
-        return jsonify({"success": True, "data": result, "job_meta": job_meta, "warning": warning})
+        return jsonify({"success": True, "data": result, "job_meta": job_meta,
+                        "warning": warning, "model_used": effective_model})
 
     except ValueError as e:
         traceback.print_exc()
