@@ -830,7 +830,13 @@ def _build_tailor_user_msg(resume_text: str, prompt_text: str, jd_text: str, det
    the tailored resume must have AT LEAST as many bullets per role as the original. REWRITE each
    bullet to reflect the JD's priorities, responsibilities, and exact terminology (this is how
    you tailor the experience), but keep every one of them. The output must not be shorter than
-   the original resume."""
+   the original resume.
+7. MARK YOUR CHANGES: wrap in « » (guillemet characters, U+00AB and U+00BB) every word or
+   phrase you changed, reworded, or newly added versus the original resume — in the Summary,
+   Skills, and Experience bullets. Example: "«Architected» scalable «React and TypeScript»
+   services «serving 10k+ users»". Do NOT mark text you left unchanged. NEVER mark the name,
+   job title, or any contact detail. Use the exact characters « and » (not quotes or brackets),
+   and always close every « with a matching »."""
 
     user_msg = f"""Here are the two inputs:
 
@@ -1478,6 +1484,8 @@ def _clean_text(text) -> str:
         return f"{display} ({url})"
     text = _MD_LINK_RE.sub(_unwrap, text)
     cleaned = (text
+        .replace("\u00ab", "")    # \u00ab change-highlight marker (preview only) \u2014 strip from PDF
+        .replace("\u00bb", "")    # \u00bb  ditto
         .replace("\u2013", "-")   # en dash
         .replace("\u2014", "-")   # em dash
         .replace("\u2018", "'")   # left single quote
@@ -2852,7 +2860,7 @@ def api_answer_questions():
             edu = resume_json.get("education", {})
             if edu:
                 resume_lines.append(f"\nEducation: {edu.get('degree', '')} — {edu.get('school', '')}")
-        resume_text = "\n".join(resume_lines)
+        resume_text = "\n".join(resume_lines).replace("«", "").replace("»", "")
 
         system_prompt = """You are an expert job application assistant. You help candidates write compelling,
 authentic answers to job application questions. You have deep context about:

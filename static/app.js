@@ -734,6 +734,10 @@ function buildResumeHTML(d) {
     }
   }
 
+  // Render the AI's change markers («…») as yellow highlights. Markers only appear
+  // inside text fields (already HTML-escaped by esc), so this is safe on the final HTML.
+  html = html.replace(/«([\s\S]*?)»/g, '<mark class="tailor-change">$1</mark>');
+  html = html.replace(/[«»]/g, "");  // drop any unmatched stray markers
   return html;
 }
 

@@ -1833,3 +1833,18 @@ del.diff-removed { background: rgba(239,68,68,0.25);  color: #fca5a5; text-decor
 .saved-selectall { display: flex; align-items: center; gap: 6px; font-size: 0.82rem; color: var(--text-muted); cursor: pointer; }
 .saved-selectall input, .saved-select { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
 .saved-card .saved-select { margin-right: 4px; }
+
+/* Yellow highlight for text the AI changed/added during tailoring (preview only) */
+.resume-preview mark.tailor-change {
+  background: #fde047;
+  color: inherit;
+  padding: 0 1px;
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+/* Legend caption + ensure the sample marker is yellow outside the preview too */
+mark.tailor-change { background: #fde047; color: #1a1a1a; padding: 0 1px; border-radius: 2px; }
+.preview-legend { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 12px; }
+.preview-legend mark.tailor-change { font-weight: 500; }
