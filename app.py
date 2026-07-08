@@ -788,7 +788,7 @@ def _build_tailor_user_msg(resume_text: str, prompt_text: str, jd_text: str, det
             )
         elif sec_type == "experience":
             section_examples.append(
-                f'    {{"type": "experience", "heading": "{sec_name}", "items": [{{"company": "Company Name", "job_title": "Title", "dates": "MM/YYYY - MM/YYYY", "bullets": ["bullet 1", "bullet 2"]}}]}}'
+                f'    {{"type": "experience", "heading": "{sec_name}", "items": [{{"company": "Company Name", "location": "City, State/Country", "job_title": "Title", "dates": "MM/YYYY - MM/YYYY", "bullets": ["bullet 1", "bullet 2"]}}]}}'
             )
         elif sec_type == "education":
             section_examples.append(
@@ -810,9 +810,12 @@ def _build_tailor_user_msg(resume_text: str, prompt_text: str, jd_text: str, det
 1. Do NOT change the candidate's TITLE or any PERSONAL DETAIL. Keep the name, email, phone,
    location, and links (LinkedIn / GitHub / portfolio) and the job title EXACTLY as they
    appear in the original resume — never reformat, translate, abbreviate, or invent any of them.
-2. The output MUST have the SAME sections as the original resume, in the SAME order. The detected sections are: [{sections_list}].
-3. Do NOT drop, merge, or add sections. Mirror the original resume's structure exactly.
-4. TECHNOLOGY ALIGNMENT (high priority): Read EVERY technology, framework, language,
+2. For EXPERIENCE sections, preserve the COMPANY LOCATION from the original resume for each job.
+   Include the "location" field (e.g., "City, State" or "City, Country") exactly as it appears
+   in the original resume for each company entry.
+3. The output MUST have the SAME sections as the original resume, in the SAME order. The detected sections are: [{sections_list}].
+4. Do NOT drop, merge, or add sections. Mirror the original resume's structure exactly.
+5. TECHNOLOGY ALIGNMENT (high priority): Read EVERY technology, framework, language,
    library, platform and tool named in the JOB DESCRIPTION (e.g. React, Angular, Vue,
    TypeScript, Node.js, AWS, Kubernetes, PostgreSQL, etc.). For each one the candidate
    has genuine or directly-transferable experience with, surface the JD's EXACT term
@@ -821,17 +824,17 @@ def _build_tailor_user_msg(resume_text: str, prompt_text: str, jd_text: str, det
    over the resume's older/synonym terms when the candidate's experience supports it
    (e.g. resume "JS frameworks" -> JD "React"; "K8s" -> "Kubernetes"). Never invent a
    technology the candidate has no plausible experience with.
-5. JOB IDENTITY: extract the hiring COMPANY name and the JOB TITLE from the JOB
+6. JOB IDENTITY: extract the hiring COMPANY name and the JOB TITLE from the JOB
    DESCRIPTION (not the resume). Put them in "detected_company" and "detected_job_title".
    If one is not stated, use an empty string for it.
-6. TAILOR THE WHOLE RESUME — do NOT return it unchanged (this is the MOST IMPORTANT rule):
+7. TAILOR THE WHOLE RESUME — do NOT return it unchanged (this is the MOST IMPORTANT rule):
    - REWRITE the Summary AND every Experience bullet in every role so they foreground THIS job
      description's responsibilities, priorities, tools, and exact terminology, using only the
      candidate's real facts. Copying any bullet word-for-word from the original is a FAILURE.
    - Keep all the same roles/companies and a similar number of bullets, and never invent
      experience — but the WORDING must change. A tailored resume that reads the same as the
      original is WRONG. Tailoring only the Summary and leaving Experience unchanged is WRONG.
-7. MARK YOUR CHANGES in EVERY section you rewrote — the Summary, Skills, AND (especially) every
+8. MARK YOUR CHANGES in EVERY section you rewrote — the Summary, Skills, AND (especially) every
    Experience bullet, not just the Summary. Wrap in [[ ]] (guillemets, U+00AB / U+00BB) every word
    or phrase you changed, reworded, or added. Example: "[[Architected]] scalable [[React and
    TypeScript]] services [[serving 10k+ users]]". If an Experience bullet has no [[ ]] marks, you did
@@ -1558,6 +1561,8 @@ PDF_TEMPLATES = {
         "header_line_color": (37, 99, 165),
         "skill_bullet": "-",
         "contact_align": "C",
+        "job_company_separator": " | ",        # pipe separator between company and location
+        "job_title_size": 10.5,
     },
     "modern_green": {
         "accent": (107, 142, 35),
@@ -1565,12 +1570,14 @@ PDF_TEMPLATES = {
         "body": (51, 51, 51),
         "gray": (102, 102, 102),
         "name_align": "L",
-        "name_size": 24,
+        "name_size": 20,
         "header_transform": "title",
-        "header_size": 14,
+        "header_size": 12,
         "header_line_color": (200, 200, 200),
         "skill_bullet": "-",
         "contact_align": "L",
+        "job_company_separator": " | ",        # pipe separator between company and location
+        "job_title_size": 10.5,
     },
     "universal": {
         "accent": (50, 50, 50),
@@ -1578,12 +1585,14 @@ PDF_TEMPLATES = {
         "body": (45, 45, 45),
         "gray": (110, 110, 110),
         "name_align": "L",
-        "name_size": 22,
+        "name_size": 20,
         "header_transform": "upper",
-        "header_size": 11,
+        "header_size": 12,
         "header_line_color": (180, 180, 180),
         "skill_bullet": "-",
         "contact_align": "L",
+        "job_company_separator": " | ",        # pipe separator between company and location
+        "job_title_size": 10.5,
     },
     # Mirrors the layout used by Sudderick Matthew's reference resume PDF:
     # large regular-weight name, stacked contact lines, thin grey rule ABOVE each
@@ -1595,23 +1604,47 @@ PDF_TEMPLATES = {
         "body":               (50, 50, 50),
         "gray":               (110, 110, 110),
         "name_align":         "L",
-        "name_size":          26,
+        "name_size":          20,
         "name_bold":          False,           # NEW: name rendered in regular weight
         "contact_align":      "L",
         "contact_stacked":    True,            # NEW: each contact part on its own line
         "header_transform":   "title",
-        "header_size":        13,
+        "header_size":        12,
         "header_bold":        False,           # NEW: heading in regular weight
         "header_line_color":  (210, 210, 210),
         "header_line_position":"above",        # NEW: rule sits ABOVE the heading text
         "skill_bullet":       "-",
         "job_title_bold":     False,           # NEW: job title regular weight
-        "job_title_size":     13,              # NEW: larger than other templates
-        "job_company_separator": " - ",          # bullet glyph between company and location
+        "job_title_size":     10.5,
+        "job_company_separator": " | ",        # pipe separator between company and location
         "bullet_inline_bold": True,            # NEW: parse **bold** markdown inside bullets
         "bullet_glyph_size":  0.85,
         "simple_list_as_paragraph": True,      # NEW: skills/etc. render as plain paragraph, no bullets
         "education_layout":   "minimal",       # NEW: degree first, school+location grey, dates grey
+    },
+    "minimal_blue": {
+        "accent":             (37, 99, 165),   # Blue accent color
+        "dark":               (25, 25, 25),
+        "body":               (50, 50, 50),
+        "gray":               (110, 110, 110),
+        "name_align":         "L",
+        "name_size":          20,              # Same as classic_blue
+        "name_bold":          True,            # Same as classic_blue
+        "contact_align":      "L",
+        "contact_stacked":    True,            # each contact part on its own line
+        "header_transform":   "upper",         # Same as classic_blue
+        "header_size":        12,              # Same as classic_blue
+        "header_bold":        True,            # Same as classic_blue
+        "header_line_color":  (37, 99, 165),   # Blue header line
+        "header_line_position":"above",        # rule sits ABOVE the heading text
+        "skill_bullet":       "-",
+        "job_title_bold":     True,            # Same as classic_blue
+        "job_title_size":     10.5,            # Same as classic_blue
+        "job_company_separator": " | ",        # pipe separator between company and location
+        "bullet_inline_bold": True,            # parse **bold** markdown inside bullets
+        "bullet_glyph_size":  0.85,
+        "simple_list_as_paragraph": True,      # skills/etc. render as plain paragraph, no bullets
+        "education_layout":   "minimal",       # degree first, school+location grey, dates grey
     },
 }
 
@@ -1906,7 +1939,7 @@ def _render_section_skills(pdf, section):
 
         # Arrow bullet
         pdf.set_x(pdf.l_margin)
-        pdf.set_font("Helvetica", "", 9)
+        pdf.set_font("Helvetica", "", 9.5)
         pdf.set_text_color(*pdf.BODY)
         pdf.cell(arrow_indent, 5, pdf.cfg.get("skill_bullet", "-"))
 
@@ -1959,16 +1992,13 @@ def _render_section_skills(pdf, section):
 def _render_section_experience(pdf, section):
     """Render an experience section with job entries.
 
-    Default templates: "Company – Job Title" bold on line 1, dates grey on line 2.
-    Templates with `minimal_clean`-style cfg: large regular Job Title on line 1,
-    grey "Company - Location" on line 2, grey dates on line 3.
+    All templates: "Company | Location | Title" on line 1, dates on line 2.
     """
     pdf.section_header(section.get("heading", "Experience"))
     cfg = pdf.cfg
-    minimal_layout = cfg.get("job_title_size") and not cfg.get("job_title_bold", True)
     title_weight = "B" if cfg.get("job_title_bold", True) else ""
     title_size = cfg.get("job_title_size", 10.5)
-    sep = cfg.get("job_company_separator", " - ")
+    sep = cfg.get("job_company_separator", " | ")
 
     for job in _to_list(section.get("items")):
         if isinstance(job, str):
@@ -1979,32 +2009,25 @@ def _render_section_experience(pdf, section):
         dates = _clean_text(job.get("dates", ""))
         location = _clean_text(job.get("location", "") or job.get("context", ""))
 
-        if minimal_layout:
-            # Line 1: Job Title (regular weight, larger)
-            pdf.set_font("Helvetica", title_weight, title_size)
-            pdf.set_text_color(*pdf.DARK)
-            pdf.cell(0, 7, title or company, new_x="LMARGIN", new_y="NEXT")
+        # Line 1: Company | Location | Title
+        pdf.set_font("Helvetica", title_weight, title_size)
+        pdf.set_text_color(*pdf.DARK)
+        # Build the line with proper handling of missing location
+        if company and location and title:
+            company_location_title = f"{company}{sep}{location}{sep}{title}"
+        elif company and title:
+            company_location_title = f"{company}{sep}{title}"
+        elif company:
+            company_location_title = company
+        else:
+            company_location_title = title or ""
+        pdf.cell(0, 6, company_location_title, new_x="LMARGIN", new_y="NEXT")
 
-            # Line 2: Company - Location (small grey)
+        # Line 2: Dates (grey)
+        if dates:
             pdf.set_font("Helvetica", "", 9.5)
             pdf.set_text_color(*pdf.GRAY)
-            sub_parts = [p for p in (company, location) if p]
-            if sub_parts:
-                pdf.cell(0, 5, sep.join(sub_parts), new_x="LMARGIN", new_y="NEXT")
-
-            # Line 3: Dates (small grey)
-            if dates:
-                pdf.cell(0, 5, dates, new_x="LMARGIN", new_y="NEXT")
-        else:
-            # Original layout
-            pdf.set_font("Helvetica", title_weight, title_size)
-            pdf.set_text_color(*pdf.DARK)
-            company_title = f"{company}{sep}{title}" if company and title else company or title
-            pdf.cell(0, 6, company_title, new_x="LMARGIN", new_y="NEXT")
-            if dates:
-                pdf.set_font("Helvetica", "", 9.5)
-                pdf.set_text_color(*pdf.GRAY)
-                pdf.cell(0, 5, dates, new_x="LMARGIN", new_y="NEXT")
+            pdf.cell(0, 5, dates, new_x="LMARGIN", new_y="NEXT")
         pdf.ln(1)
 
         # Bullets
@@ -2079,7 +2102,7 @@ def _render_section_projects(pdf, section):
         if isinstance(proj, str):
             pdf.bullet(proj)
             continue
-        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_font("Helvetica", "B", 10.5)
         pdf.set_text_color(*pdf.DARK)
         name = _clean_text(proj.get("name", ""))
         pdf.cell(0, 6, name, new_x="LMARGIN", new_y="NEXT")
@@ -2207,17 +2230,31 @@ def generate_pdf(data: dict, template: str = "modern_green") -> bytes:
         if data.get("experience"):
             pdf.section_header("Experience")
             for job in data["experience"]:
+                company = _clean_text(job.get('company', ''))
+                location = _clean_text(job.get('location', ''))
+                title = _clean_text(job.get('job_title', ''))
+                dates = _clean_text(job.get('dates', ''))
+
+                # Line 1: Company | Location | Title
                 pdf.set_font("Helvetica", "B", 11)
                 pdf.set_text_color(*pdf.DARK)
-                pdf.cell(0, 6, _clean_text(job.get("job_title", "")), new_x="LMARGIN", new_y="NEXT")
-                pdf.set_font("Helvetica", "", 9.5)
-                pdf.set_text_color(*pdf.ACCENT)
-                company_ctx = _clean_text(f"{job.get('company', '')} -- {job.get('context', '')}")
-                pdf.cell(pdf.get_string_width(company_ctx) + 2, 5, company_ctx)
-                pdf.set_text_color(*pdf.GRAY)
-                meta = _clean_text(f"  |  {job.get('dates', '')}  |  {job.get('location', '')}")
-                pdf.cell(0, 5, meta, new_x="LMARGIN", new_y="NEXT")
+                if company and location and title:
+                    company_location_title = f"{company} | {location} | {title}"
+                elif company and title:
+                    company_location_title = f"{company} | {title}"
+                elif company:
+                    company_location_title = company
+                else:
+                    company_location_title = title or ""
+                pdf.cell(0, 6, company_location_title, new_x="LMARGIN", new_y="NEXT")
+
+                # Line 2: Dates
+                if dates:
+                    pdf.set_font("Helvetica", "", 9.5)
+                    pdf.set_text_color(*pdf.GRAY)
+                    pdf.cell(0, 5, dates, new_x="LMARGIN", new_y="NEXT")
                 pdf.ln(1)
+
                 for b in job.get("bullets", []):
                     pdf.bullet(b)
                 pdf.ln(3)
