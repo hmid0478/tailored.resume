@@ -4,7 +4,7 @@ AI-powered resume tailoring app that rewrites (or keyword-swaps) your resume for
 
 Multi-provider: works with **Anthropic Claude**, **Google Gemini**, **OpenAI**, **OpenRouter**, **Groq**, **Together AI**, **Ollama (local)**, or any OpenAI-compatible endpoint.
 
-## What it does
+## What it does:
 
 1. You upload your resume once (`.docx` / `.pdf` / `.txt`).
 2. You paste a job description.
