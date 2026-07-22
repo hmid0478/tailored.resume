@@ -2494,12 +2494,11 @@ def api_admin_create_user():
     return jsonify({"success": True, "email": email})
 
 
-@app.route("/api/admin/users/<path:email>", methods=["PUT"])
-@require_admin
-def api_admin_update_user(email):
+def _admin_update_user(email, data):
     """Change a user's name and/or password."""
     email = (email or "").strip().lower()
-    data = request.get_json(silent=True) or {}
+    if not email:
+        return jsonify({"error": "Email is required."}), 400
     updates = {}
     if "name" in data:
         updates["name"] = (data.get("name") or "").strip()
@@ -2521,10 +2520,10 @@ def api_admin_update_user(email):
     return jsonify({"success": True, "email": email})
 
 
-@app.route("/api/admin/users/<path:email>", methods=["DELETE"])
-@require_admin
-def api_admin_delete_user(email):
+def _admin_delete_user(email):
     email = (email or "").strip().lower()
+    if not email:
+        return jsonify({"error": "Email is required."}), 400
     try:
         existed = STORE.delete_user(email)
     except Exception as e:
@@ -2533,6 +2532,36 @@ def api_admin_delete_user(email):
     if not existed:
         return jsonify({"error": "User not found."}), 404
     return jsonify({"success": True, "email": email})
+
+
+# The admin UI uses these POST routes (email in the JSON body) because some
+# hosting/routing layers (e.g. Vercel's catch-all route) and proxies mishandle
+# PUT/DELETE or percent-encoded emails in the URL path.
+@app.route("/api/admin/users/update", methods=["POST"])
+@require_admin
+def api_admin_update_user_post():
+    data = request.get_json(silent=True) or {}
+    return _admin_update_user(data.get("email"), data)
+
+
+@app.route("/api/admin/users/delete", methods=["POST"])
+@require_admin
+def api_admin_delete_user_post():
+    data = request.get_json(silent=True) or {}
+    return _admin_delete_user(data.get("email"))
+
+
+# Legacy REST-style routes, kept for backward compatibility.
+@app.route("/api/admin/users/<path:email>", methods=["PUT"])
+@require_admin
+def api_admin_update_user(email):
+    return _admin_update_user(email, request.get_json(silent=True) or {})
+
+
+@app.route("/api/admin/users/<path:email>", methods=["DELETE"])
+@require_admin
+def api_admin_delete_user(email):
+    return _admin_delete_user(email)
 
 
 # ─────────────────────────────────────────────

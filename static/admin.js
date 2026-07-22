@@ -223,14 +223,15 @@
   }
 
   async function saveUser(email, name, password, btn) {
-    const body = { name };
+    // POST with the email in the body — PUT + email-in-URL breaks on some hosts.
+    const body = { email, name };
     if (password && password.trim()) body.password = password.trim();
     const label = btn.textContent;
     btn.disabled = true;
     btn.textContent = "Saving…";
     try {
-      const res = await adminFetch("/api/admin/users/" + encodeURIComponent(email), {
-        method: "PUT",
+      const res = await adminFetch("/api/admin/users/update", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
@@ -250,7 +251,11 @@
     btn.disabled = true;
     btn.textContent = "Deleting...";
     try {
-      const res = await adminFetch("/api/admin/users/" + encodeURIComponent(email), { method: "DELETE" });
+      const res = await adminFetch("/api/admin/users/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
       const json = await res.json();
       if (!res.ok || json.error) throw new Error(json.error || "Could not delete user.");
       loadUsers();
