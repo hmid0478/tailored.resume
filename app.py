@@ -1031,7 +1031,12 @@ def _call_anthropic(api_key: str, model: str, prompt: str, max_tokens: int, json
 def _call_gemini(api_key: str, model: str, prompt: str, max_tokens: int, json_mode: bool, base_url: str | None, temperature: float = 0) -> str:
     from google import genai
     from google.genai import types
-    client = genai.Client(api_key=api_key)
+    # base_url was previously accepted and silently ignored here, so a custom Gemini
+    # endpoint quietly went to Google's default host.
+    http_options = types.HttpOptions(timeout=120_000)  # milliseconds
+    if base_url:
+        http_options.base_url = base_url
+    client = genai.Client(api_key=api_key, http_options=http_options)
     config_kwargs = {"max_output_tokens": max_tokens, "temperature": temperature}
     if json_mode:
         config_kwargs["response_mime_type"] = "application/json"
@@ -1047,7 +1052,11 @@ def _call_openai_compatible(api_key: str, model: str, prompt: str, max_tokens: i
     """Works for OpenAI, OpenRouter, Groq, Together, Ollama, LM Studio, any OpenAI-compatible endpoint."""
     from openai import OpenAI
     # Ollama's OpenAI shim accepts any string as api_key; pass a placeholder if missing.
-    client = OpenAI(api_key=api_key or "ollama-local", base_url=base_url)
+    # max_retries=1 / timeout: same reasoning as _call_anthropic — the SDK default of
+    # 2 retries stacked under call_ai's 4 attempts is 12 HTTP calls, and the default
+    # 600s timeout would hang well past any serverless request limit.
+    client = OpenAI(api_key=api_key or "ollama-local", base_url=base_url,
+                    max_retries=1, timeout=120.0)
     system_text, user_text = _split_system_user(prompt)
     messages = []
     if system_text:
@@ -1123,6 +1132,24 @@ import time as _time
 _RETRY_BUDGET_S = 40.0 if os.environ.get("VERCEL") else 90.0
 
 
+def _status_code(exc: Exception) -> int | None:
+    """The HTTP status a provider SDK attached to the error, if any.
+
+    Substring-matching "401"/"429" against the whole error text misfires on request
+    ids and model names that happen to contain those digits, so use the real status
+    when the SDK gives us one.
+    """
+    for attr in ("status_code", "code", "http_status"):
+        val = getattr(exc, attr, None)
+        if isinstance(val, int) and 100 <= val <= 599:
+            return val
+    resp = getattr(exc, "response", None)
+    val = getattr(resp, "status_code", None)
+    if isinstance(val, int) and 100 <= val <= 599:
+        return val
+    return None
+
+
 def _is_daily_quota_error(exc: Exception) -> bool:
     """Hard quota exhaustion (Gemini free-tier daily cap, OpenAI billing limit).
 
@@ -1133,7 +1160,16 @@ def _is_daily_quota_error(exc: Exception) -> bool:
     return ("resource_exhausted" in err_lower
             or "quota exceeded" in err_lower
             or "exceeded your current quota" in err_lower
-            or "insufficient_quota" in err_lower)
+            or "insufficient_quota" in err_lower
+            # OpenAI returns these as 429s even though no amount of waiting helps.
+            or "no credits remaining" in err_lower
+            or "credit_balance_exhausted" in err_lower
+            or "billing_hard_limit_reached" in err_lower
+            # Anthropic's equivalent.
+            or "credit balance is too low" in err_lower
+            # OpenRouter / Together.
+            or "insufficient credits" in err_lower
+            or "not enough credits" in err_lower)
 
 
 def _is_rate_limit_error(exc: Exception) -> bool:
@@ -1144,6 +1180,8 @@ def _is_rate_limit_error(exc: Exception) -> bool:
     err_lower = err_str.lower()
     name = type(exc).__name__.lower()
     if "ratelimit" in name:
+        return True
+    if _status_code(exc) == 429:
         return True
     if "429" in err_str or "rate_limit" in err_lower or "rate limit" in err_lower:
         return True
@@ -1195,6 +1233,8 @@ def _is_transient_provider_error(exc: Exception) -> bool:
     if _is_daily_quota_error(exc):
         return False
     if "servererror" in name:
+        return True
+    if _status_code(exc) in (500, 502, 503, 504):
         return True
     if "503" in err_str or "502" in err_str or "504" in err_str:
         return True
@@ -1289,12 +1329,29 @@ def _provider_error_response(exc: Exception):
     err_str = str(exc)
     err_lower = err_str.lower()
     name = type(exc).__name__.lower()
-    # Auth-ish
-    if "authentication" in name or "API_KEY_INVALID" in err_str or "Incorrect API key" in err_str or "401" in err_str:
+    status = _status_code(exc)
+    # Auth-ish. Covers Anthropic/OpenAI AuthenticationError, Gemini's API_KEY_INVALID
+    # (which arrives as a 400), Groq/Together/OpenRouter invalid_api_key.
+    if ("authentication" in name or "permissiondenied" in name
+            or "API_KEY_INVALID" in err_str or "Incorrect API key" in err_str
+            or "invalid_api_key" in err_lower or "invalid x-api-key" in err_lower
+            or "api key not valid" in err_lower or "no auth credentials" in err_lower
+            or status == 401 or (status is None and "401" in err_str)):
         return jsonify({"error": "Invalid API key. Please check the key for the selected provider."}), 401
-    # Daily quota exhausted (Gemini free tier, OpenAI billing limits, etc.) — distinct
-    # from per-minute rate limiting because the user can't just "wait a moment".
-    if "resource_exhausted" in err_lower or "quota exceeded" in err_lower or "exceeded your current quota" in err_lower:
+    # Out of credits / billing limit hit. Providers send this as a 429, but it is a
+    # billing problem, not a rate limit — waiting will never clear it.
+    if ("no credits remaining" in err_lower or "credit_balance_exhausted" in err_lower
+            or "insufficient_quota" in err_lower or "billing_hard_limit_reached" in err_lower
+            or "credit balance is too low" in err_lower
+            # OpenRouter / Together phrasing, sent as HTTP 402.
+            or "insufficient credits" in err_lower or "not enough credits" in err_lower
+            or status == 402):
+        return jsonify({"error": "This provider account is out of credits (the provider returns this "
+                        "as a 429, but waiting won't help). Add credits to the billing account for "
+                        "this API key, or switch Provider in the dropdown to a key that has balance."}), 402
+    # Daily quota exhausted (Gemini free tier, etc.) — distinct from per-minute rate
+    # limiting because the user can't just "wait a moment".
+    if _is_daily_quota_error(exc):
         # Try to surface model + tip
         msg = ("Daily quota exhausted for this model. Options: "
                "(1) switch the Model to a higher-quota one (e.g. 'gemini-2.5-flash-lite' has 1,500/day on Gemini free tier vs. 20/day for 'gemini-2.5-flash'), "
@@ -1308,7 +1365,9 @@ def _provider_error_response(exc: Exception):
                         "If it keeps happening, pick a smaller/faster model or switch Provider "
                         "in the dropdown."}), 429
     # Provider overload / temporarily unavailable (Gemini's "model experiencing high demand", OpenAI 503, etc.)
-    if "unavailable" in err_lower or "503" in err_str or "overloaded" in err_lower or "high demand" in err_lower or "servererror" in name:
+    if ("unavailable" in err_lower or "overloaded" in err_lower or "high demand" in err_lower
+            or "servererror" in name or (status in (500, 502, 503, 504))
+            or (status is None and "503" in err_str)):
         return jsonify({"error": "The AI provider is overloaded right now. Wait 30 seconds and retry, or pick a different model/provider in the dropdown."}), 503
     # Invalid / unknown model ID — the Model field doesn't match the chosen provider.
     if ("invalid model" in err_lower or "model not found" in err_lower or "model_not_found" in err_lower
@@ -1317,6 +1376,10 @@ def _provider_error_response(exc: Exception):
         return jsonify({"error": "Invalid model ID for the selected provider. Check the Model field "
                         "(or clear it to use the provider's default) and make sure the model name "
                         "matches the Provider you picked in the dropdown."}), 400
+    # Our own config guards (missing base_url / model for openai_compatible, unknown
+    # provider). These are user input problems, not server faults.
+    if isinstance(exc, ValueError) and ("provider requires" in err_str or "Unknown AI provider" in err_str):
+        return jsonify({"error": err_str}), 400
     # Connection-ish (Ollama not running, bad base_url, etc.)
     if "connection" in name or "Connection" in err_str or "ECONNREFUSED" in err_str:
         return jsonify({"error": "Could not reach the AI provider. Check the base URL or that the local server is running."}), 502
