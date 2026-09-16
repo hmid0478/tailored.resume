@@ -1006,7 +1006,13 @@ def _split_system_user(prompt: str) -> tuple[str, str]:
 
 def _call_anthropic(api_key: str, model: str, prompt: str, max_tokens: int, json_mode: bool, base_url: str | None, temperature: float = 0) -> str:
     import anthropic
-    client = anthropic.Anthropic(api_key=api_key, base_url=base_url) if base_url else anthropic.Anthropic(api_key=api_key)
+    # max_retries=1: the SDK gets one quick 429/5xx retry, then call_ai's own loop
+    # takes over with the longer, Retry-After-aware backoff. Leaving the SDK default
+    # (2) on top of our 4 attempts would blow past the serverless request timeout.
+    client_kwargs = {"api_key": api_key, "max_retries": 1, "timeout": 120.0}
+    if base_url:
+        client_kwargs["base_url"] = base_url
+    client = anthropic.Anthropic(**client_kwargs)
     system_text, user_text = _split_system_user(prompt)
     # Cache the (large) system prompt so repeat tailorings cost ~10% of normal.
     system_blocks = [{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}] if system_text else []
@@ -1112,20 +1118,81 @@ def _ai_safe(text: str) -> str:
 
 import time as _time
 
+# Wall-clock budget for all retry sleeps inside one call_ai(). Serverless platforms
+# kill the request at ~60s, so never start a backoff we can't finish there.
+_RETRY_BUDGET_S = 40.0 if os.environ.get("VERCEL") else 90.0
+
+
+def _is_daily_quota_error(exc: Exception) -> bool:
+    """Hard quota exhaustion (Gemini free-tier daily cap, OpenAI billing limit).
+
+    Distinct from a per-minute rate limit: the window won't reopen in seconds, so
+    retrying is pointless.
+    """
+    err_lower = str(exc).lower()
+    return ("resource_exhausted" in err_lower
+            or "quota exceeded" in err_lower
+            or "exceeded your current quota" in err_lower
+            or "insufficient_quota" in err_lower)
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """Per-minute rate limit (429 / RateLimitError) — retryable after a cooldown."""
+    if _is_daily_quota_error(exc):
+        return False
+    err_str = str(exc)
+    err_lower = err_str.lower()
+    name = type(exc).__name__.lower()
+    if "ratelimit" in name:
+        return True
+    if "429" in err_str or "rate_limit" in err_lower or "rate limit" in err_lower:
+        return True
+    # Anthropic/OpenAI shape their per-minute caps as tokens-per-minute messages.
+    if "too many requests" in err_lower or "tokens per minute" in err_lower or "requests per minute" in err_lower:
+        return True
+    return False
+
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    """Pull the provider's own Retry-After hint off the failed HTTP response."""
+    resp = getattr(exc, "response", None)
+    headers = getattr(resp, "headers", None)
+    if not headers:
+        return None
+    for key in ("retry-after", "x-ratelimit-reset-tokens", "x-ratelimit-reset-requests"):
+        raw = None
+        try:
+            raw = headers.get(key)
+        except Exception:
+            pass
+        if not raw:
+            continue
+        m = re.match(r"^\s*([0-9]*\.?[0-9]+)\s*(ms|s|m)?\s*$", str(raw))
+        if not m:
+            continue
+        val = float(m.group(1))
+        unit = m.group(2)
+        if unit == "ms":
+            val /= 1000.0
+        elif unit == "m":
+            val *= 60.0
+        # Clamp: a provider asking for 10 minutes is not something we sit and wait on.
+        return max(1.0, min(val, 60.0))
+    return None
+
 
 def _is_transient_provider_error(exc: Exception) -> bool:
     """Heuristic: is this error worth retrying?
 
     Provider 503 / "overloaded" / "high demand" / explicit ServerError → yes.
     Auth, invalid arg, content filtering, daily quota exhausted → no (retrying
-    can't fix these).
+    can't fix these). Per-minute rate limits are handled by _is_rate_limit_error,
+    which gets a longer backoff schedule.
     """
     err_str = str(exc)
     err_lower = err_str.lower()
     name = type(exc).__name__.lower()
-    # Hard quota exhaustion — don't bother retrying, the daily window won't reopen
-    # in seconds.
-    if "resource_exhausted" in err_lower or "quota exceeded" in err_lower or "exceeded your current quota" in err_lower:
+    if _is_daily_quota_error(exc):
         return False
     if "servererror" in name:
         return True
@@ -1180,20 +1247,36 @@ def call_ai(
             return _call_openai_compatible(api_key, chosen_model, prompt, max_tokens, json_mode, base_url, temperature)
         raise ValueError(f"Unknown AI provider: {provider}")
 
-    # Retry loop for transient provider errors (Gemini "high demand" / OpenAI 503 / etc.)
-    backoffs = (1.5, 4.0, 9.0)  # wait between attempts; total ~14.5s worst case
+    # Retry loop for transient provider errors (503 / "high demand") AND for
+    # per-minute rate limits (429), which are the common failure when one tailor
+    # fires several 16k-token calls back to back.
+    overload_backoffs = (1.5, 4.0, 9.0)    # 5xx clears fast
+    rate_limit_backoffs = (8.0, 20.0, 30.0)  # per-minute windows need a real cooldown
+    deadline = _time.monotonic() + _RETRY_BUDGET_S
+    attempts = 4
     last_exc = None
-    for attempt, wait in enumerate([0.0] + list(backoffs)):
-        if wait > 0:
-            print(f"[call_ai] transient error, retrying in {wait}s (attempt {attempt+1}/{len(backoffs)+1})")
-            _time.sleep(wait)
+    for attempt in range(attempts):
         try:
             return _dispatch()
         except Exception as e:
             last_exc = e
-            if not _is_transient_provider_error(e):
+            rate_limited = _is_rate_limit_error(e)
+            if not (rate_limited or _is_transient_provider_error(e)):
                 raise
-            # else: fall through to next backoff
+            if attempt == attempts - 1:
+                break
+            wait = _retry_after_seconds(e)
+            if wait is None:
+                wait = (rate_limit_backoffs if rate_limited else overload_backoffs)[attempt]
+            # Don't start a sleep we can't finish before the platform kills the request.
+            remaining = deadline - _time.monotonic()
+            if wait >= remaining:
+                print(f"[call_ai] {'rate limited' if rate_limited else 'transient error'}; "
+                      f"retry budget exhausted ({remaining:.1f}s left, needs {wait:.1f}s) — giving up")
+                break
+            print(f"[call_ai] {'rate limited (429)' if rate_limited else 'transient error'}, "
+                  f"retrying in {wait:.1f}s (attempt {attempt + 2}/{attempts})")
+            _time.sleep(wait)
     # Exhausted retries — surface the last error.
     raise last_exc
 
@@ -1219,8 +1302,11 @@ def _provider_error_response(exc: Exception):
                "(3) enable Fast mode to use ~6× fewer calls per tailor.")
         return jsonify({"error": msg}), 429
     # Per-minute rate-limit-ish
-    if "ratelimit" in name or "rate_limit" in err_lower or "429" in err_str:
-        return jsonify({"error": "Rate limited. Please wait a moment and try again."}), 429
+    if _is_rate_limit_error(exc):
+        return jsonify({"error": "The AI provider rate-limited this request (429), and it was still "
+                        "limited after several automatic retries. Wait about a minute and try again. "
+                        "If it keeps happening, pick a smaller/faster model or switch Provider "
+                        "in the dropdown."}), 429
     # Provider overload / temporarily unavailable (Gemini's "model experiencing high demand", OpenAI 503, etc.)
     if "unavailable" in err_lower or "503" in err_str or "overloaded" in err_lower or "high demand" in err_lower or "servererror" in name:
         return jsonify({"error": "The AI provider is overloaded right now. Wait 30 seconds and retry, or pick a different model/provider in the dropdown."}), 503
