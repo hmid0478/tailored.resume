@@ -324,3 +324,42 @@ body::before {
 
 /* Wider admin shell to fit the name/email/password columns */
 .admin-shell { max-width: 1040px; }
+
+/* ─── Admin: per-user provider API keys ─── */
+.keys-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  margin: 2px 0 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.keys-panel.keys-empty {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+.key-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.key-provider {
+  min-width: 165px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+.key-value {
+  flex: 1;
+  min-width: 180px;
+  padding: 5px 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.8rem;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}

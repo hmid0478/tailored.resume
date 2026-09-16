@@ -2683,6 +2683,88 @@ def _admin_delete_user(email):
     return jsonify({"success": True, "email": email})
 
 
+PROVIDER_LABELS = {
+    "anthropic": "Anthropic (Claude)",
+    "gemini": "Google Gemini",
+    "openai": "OpenAI",
+    "openrouter": "OpenRouter",
+    "groq": "Groq",
+    "together": "Together AI",
+    "ollama": "Ollama (local)",
+    "openai_compatible": "OpenAI-compatible (custom)",
+}
+
+
+def _mask_key(key: str) -> str:
+    """sk-proj-abc...wxyz — enough to tell two keys apart, not enough to use one."""
+    key = (key or "").strip()
+    if not key:
+        return ""
+    if len(key) <= 12:
+        return key[:2] + "*" * max(0, len(key) - 2)
+    return f"{key[:7]}...{key[-4:]}"
+
+
+@app.route("/api/admin/user-keys", methods=["POST"])
+@require_admin
+def api_admin_user_keys():
+    """Provider API keys a user has saved to their account.
+
+    Masked by default. Full values are returned only when the admin explicitly asks
+    (reveal=true), and every reveal is written to the server log — these are the
+    user's own billable credentials, so the read should leave a trace.
+    """
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    reveal = bool(data.get("reveal"))
+    provider_filter = (data.get("provider") or "").strip().lower()
+    if not email:
+        return jsonify({"error": "Email is required."}), 400
+    try:
+        if not STORE.get_user(email):
+            return jsonify({"error": "User not found."}), 404
+        settings = STORE.get_settings(email) or {}
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"Could not load that user's keys: {e}"}), 500
+
+    provider_keys = settings.get("providerKeys") or {}
+    if not isinstance(provider_keys, dict):
+        provider_keys = {}
+    base_urls = settings.get("providerBaseUrls") or {}
+    if not isinstance(base_urls, dict):
+        base_urls = {}
+    models = settings.get("providerModels") or {}
+    if not isinstance(models, dict):
+        models = {}
+
+    if reveal:
+        admin_email = getattr(request, "identity", {}).get("email", "admin")
+        scope = provider_filter or "ALL providers"
+        print(f"[admin-audit] {admin_email} revealed API key ({scope}) for user {email}")
+
+    out = []
+    for provider, key in sorted(provider_keys.items()):
+        if not isinstance(key, str) or not key.strip():
+            continue
+        if provider_filter and provider != provider_filter:
+            continue
+        entry = {
+            "provider": provider,
+            "label": PROVIDER_LABELS.get(provider, provider),
+            "masked": _mask_key(key),
+            "model": models.get(provider) or "",
+            "base_url": base_urls.get(provider) or "",
+        }
+        if reveal:
+            entry["key"] = key
+        out.append(entry)
+
+    return jsonify({"success": True, "email": email,
+                    "active_provider": settings.get("provider") or "",
+                    "keys": out})
+
+
 # The admin UI uses these POST routes (email in the JSON body) because some
 # hosting/routing layers (e.g. Vercel's catch-all route) and proxies mishandle
 # PUT/DELETE or percent-encoded emails in the URL path.

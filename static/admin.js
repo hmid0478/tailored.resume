@@ -165,7 +165,7 @@
     }
     const table = document.createElement("table");
     table.className = "user-table";
-    table.innerHTML = "<thead><tr><th>Name</th><th>Email</th><th>Password</th><th></th></tr></thead>";
+    table.innerHTML = "<thead><tr><th>Name</th><th>Email</th><th>Password</th><th>API keys</th><th></th></tr></thead>";
     const tbody = document.createElement("tbody");
 
     users.forEach((u) => {
@@ -196,6 +196,14 @@
       tdPass.appendChild(passInput);
       tr.appendChild(tdPass);
 
+      // API keys (lazily loaded into a details row below this one)
+      const tdKeys = document.createElement("td");
+      const keysBtn = document.createElement("button");
+      keysBtn.className = "btn btn-ghost";
+      keysBtn.textContent = "View keys";
+      tdKeys.appendChild(keysBtn);
+      tr.appendChild(tdKeys);
+
       // Actions
       const tdAct = document.createElement("td");
       tdAct.style.textAlign = "right";
@@ -216,10 +224,159 @@
 
       tr.appendChild(tdAct);
       tbody.appendChild(tr);
+
+      // Details row, hidden until "View keys" is clicked.
+      const keysRow = document.createElement("tr");
+      keysRow.style.display = "none";
+      const keysCell = document.createElement("td");
+      keysCell.colSpan = 5;
+      keysRow.appendChild(keysCell);
+      tbody.appendChild(keysRow);
+      keysBtn.addEventListener("click", () => toggleKeys(u.email, keysRow, keysCell, keysBtn));
     });
     table.appendChild(tbody);
     usersContainer.innerHTML = "";
     usersContainer.appendChild(table);
+  }
+
+  // ── Per-user provider API keys (admin only) ──
+  // The list view shows masked keys; the full value is fetched only when the admin
+  // clicks Copy, and the server logs each of those reveals.
+  async function toggleKeys(email, row, cell, btn) {
+    if (row.style.display !== "none") {
+      row.style.display = "none";
+      btn.textContent = "View keys";
+      cell.innerHTML = "";
+      return;
+    }
+    row.style.display = "";
+    btn.textContent = "Hide keys";
+    cell.innerHTML = '<div class="keys-panel"><span class="spinner"></span> Loading keys…</div>';
+    try {
+      const res = await adminFetch("/api/admin/user-keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const json = await res.json();
+      if (!res.ok || json.error) throw new Error(json.error || "Could not load keys.");
+      renderKeys(email, cell, json);
+    } catch (err) {
+      cell.innerHTML = `<div class="keys-panel keys-empty">${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  function renderKeys(email, cell, json) {
+    const keys = json.keys || [];
+    cell.innerHTML = "";
+    const panel = document.createElement("div");
+    panel.className = "keys-panel";
+    if (!keys.length) {
+      panel.className += " keys-empty";
+      panel.textContent = "This user has not saved any provider API keys yet.";
+      cell.appendChild(panel);
+      return;
+    }
+    keys.forEach((k) => {
+      const rowEl = document.createElement("div");
+      rowEl.className = "key-row";
+
+      const label = document.createElement("span");
+      label.className = "key-provider";
+      label.textContent = k.label + (k.provider === json.active_provider ? " (active)" : "");
+      rowEl.appendChild(label);
+
+      const val = document.createElement("code");
+      val.className = "key-value";
+      val.textContent = k.masked;
+      rowEl.appendChild(val);
+
+      const reveal = document.createElement("button");
+      reveal.className = "btn btn-ghost";
+      reveal.textContent = "Show";
+      let shown = false;
+      reveal.addEventListener("click", async () => {
+        if (shown) {
+          val.textContent = k.masked;
+          reveal.textContent = "Show";
+          shown = false;
+          return;
+        }
+        const full = await fetchKey(email, k.provider, reveal);
+        if (full == null) return;
+        val.textContent = full;
+        reveal.textContent = "Hide";
+        shown = true;
+      });
+      rowEl.appendChild(reveal);
+
+      const copy = document.createElement("button");
+      copy.className = "btn btn-ghost";
+      copy.textContent = "Copy";
+      copy.addEventListener("click", async () => {
+        const full = await fetchKey(email, k.provider, copy);
+        if (full == null) return;
+        const ok = await copyText(full);
+        flash(copy, ok ? "Copied!" : "Copy failed", "Copy");
+      });
+      rowEl.appendChild(copy);
+
+      panel.appendChild(rowEl);
+    });
+    cell.appendChild(panel);
+  }
+
+  async function fetchKey(email, provider, btn) {
+    const label = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = "…";
+    try {
+      const res = await adminFetch("/api/admin/user-keys", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, provider, reveal: true }),
+      });
+      const json = await res.json();
+      if (!res.ok || json.error) throw new Error(json.error || "Could not read that key.");
+      const entry = (json.keys || [])[0];
+      if (!entry || !entry.key) throw new Error("That key is no longer saved.");
+      return entry.key;
+    } catch (err) {
+      flash(btn, err.message.slice(0, 24), label);
+      return null;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  }
+
+  // navigator.clipboard needs a secure context — an admin on http://<lan-ip> doesn't
+  // have one, so fall back to the old selection trick there.
+  async function copyText(text) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch { /* fall through */ }
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+
+  function flash(btn, text, restore) {
+    btn.textContent = text;
+    setTimeout(() => { btn.textContent = restore; }, 1600);
   }
 
   async function saveUser(email, name, password, btn) {
