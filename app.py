@@ -2552,6 +2552,55 @@ def _skills_cleanup(resume_json: dict, jd_text: str) -> None:
     target["items"] = (target["items"].rstrip(", ") + ", " + ", ".join(f"[[{m}]]" for m in missing)).lstrip(", ")
 
 
+# Generic JD boilerplate the model tacks onto the end of a bullet. Says nothing concrete.
+_FILLER_TAIL_RE = re.compile(
+    r"[,;]?\s+(?:and\s+)?(?:"
+    r"(?:to )?driv\w+ successful outcomes|"
+    r"ensur\w+ seamless integration and communication(?: across systems(?: and services)?)?|"
+    r"demonstrat\w+ (?:strong |proven )?(?:communication|collaboration|proficiency|experience)\b[^,.]*|"
+    r"improv\w+ workflows and processes|"
+    r"elevat\w+ (?:the team's )?engineering standards|"
+    r"model\w+ a culture of [^,.]*|"
+    r"working effectively within and across teams|"
+    r"to drive optimization efforts|"
+    r"(?:analyz\w+ performance metrics (?:and user feedback )?)?to identify opportunities for improvement"
+    r")\s*\.?\s*$", re.I)
+
+
+def _strip_padding(resume_json: dict) -> None:
+    """Remove boilerplate tails from bullets, and leadership/hiring tails from intern or
+    junior roles. The model keeps adding these even when told not to; dropping them
+    deterministically keeps the bullet's real content."""
+    for s in (resume_json.get("sections") or []):
+        if not isinstance(s, dict) or s.get("type") not in ("experience", "projects"):
+            continue
+        for it in (s.get("items") or []):
+            if not isinstance(it, dict) or not isinstance(it.get("bullets"), list):
+                continue
+            junior = bool(_JUNIOR_TITLE_RE.search(str(it.get("job_title", ""))))
+            out = []
+            for b in it["bullets"]:
+                if not isinstance(b, str):
+                    out.append(b)
+                    continue
+                new = b
+                for _ in range(3):  # tails are sometimes stacked
+                    stripped = _FILLER_TAIL_RE.sub("", new)
+                    if junior:
+                        # Drop a final ", <clause>" that claims hiring/mentoring/leadership.
+                        m = re.search(r",\s+([^,]*)\.?\s*$", stripped)
+                        if m and (_SENIOR_CLAIM_RE.search(m.group(1)) or re.search(r"hiring|interviews? and onboarding", m.group(1), re.I)):
+                            stripped = stripped[:m.start()]
+                    if stripped == new:
+                        break
+                    new = stripped
+                new = new.rstrip(" ,;")
+                if new and not new.endswith((".", "!", "?")) and b.rstrip().endswith("."):
+                    new += "."
+                out.append(new if len(new.split()) >= 6 else b)
+            it["bullets"] = out
+
+
 def _dedupe_skills(resume_json: dict) -> None:
     """Drop repeated skills (case-insensitive, ignoring [[ ]] marks) across all skills
     categories, keeping the first occurrence."""
@@ -2833,6 +2882,7 @@ def tailor_resume(
             print(f"[ats-guard] retry failed ({e}); keeping previous response.")
         _ats_fill_skills(data, _ats_missing(data, keywords), jd_text)
 
+    _strip_padding(data)
     _skills_cleanup(data, jd_text)
     _dedupe_skills(data)
     return data
