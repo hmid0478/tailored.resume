@@ -271,7 +271,33 @@
           <button type="button" class="btn btn-tracker" id="saved-refresh-btn">Refresh</button>
         </div>
       </div>
+      <!-- Applied-in-range filter -->
+      <div class="saved-filter">
+        <span class="saved-filter-label">Applied from</span>
+        <input type="datetime-local" id="applied-from" class="saved-filter-input" />
+        <span class="saved-filter-label">to</span>
+        <input type="datetime-local" id="applied-to" class="saved-filter-input" />
+        <button type="button" class="btn btn-tracker" id="applied-today-btn">Today</button>
+        <button type="button" class="btn btn-tracker" id="applied-clear-btn">Clear</button>
+        <span class="saved-filter-count" id="applied-count"></span>
+      </div>
       <div class="saved-list" id="saved-list"></div>
+      <div class="saved-pager" id="saved-pager" style="display: none;">
+        <label class="saved-filter-label">Show
+          <select id="saved-page-size" class="status-select">
+            <option value="10">10</option>
+            <option value="20">20</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+          per page
+        </label>
+        <div class="saved-pager-nav">
+          <button type="button" class="btn btn-tracker" id="saved-prev">&lsaquo; Prev</button>
+          <span class="saved-page-info" id="saved-page-info"></span>
+          <button type="button" class="btn btn-tracker" id="saved-next">Next &rsaquo;</button>
+        </div>
+      </div>
       <div class="saved-empty" id="saved-empty">Your tailored resumes are saved here privately. Tailor a resume to see it appear.</div>
     </div>
 

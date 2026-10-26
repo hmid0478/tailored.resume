@@ -158,7 +158,7 @@ class RedisStore:
                 out.append(json.loads(flat[i + 1]))
             except (ValueError, TypeError):
                 continue
-        out.sort(key=lambda r: r.get("created_at", ""), reverse=True)
+        out.sort(key=lambda r: (r.get("created_at", ""), r.get("id", "")), reverse=True)
         return out
 
     def get_resume(self, email: str, resume_id: str):
@@ -308,7 +308,7 @@ class JSONFileStore:
         with self._lock:
             bucket = self._read()["resumes"].get(email, {})
         out = list(bucket.values())
-        out.sort(key=lambda r: r.get("created_at", ""), reverse=True)
+        out.sort(key=lambda r: (r.get("created_at", ""), r.get("id", "")), reverse=True)
         return out
 
     def get_resume(self, email: str, resume_id: str):

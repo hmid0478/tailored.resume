@@ -2193,3 +2193,128 @@ body.modal-open {
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.18);
 }
+
+/* ── Application status + applied-in-range filter ── */
+
+.status-select {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+
+.status-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.status-select[data-status="applied"] {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.status-select[data-status="closed"] {
+  border-color: var(--text-muted);
+  color: var(--text-muted);
+}
+
+.status-select option {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.saved-card.status-closed .saved-info {
+  opacity: 0.55;
+}
+
+.saved-applied {
+  color: var(--success);
+}
+
+.saved-filter {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.saved-filter-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.saved-filter-input {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.8rem;
+  padding: 6px 8px;
+  color-scheme: dark;
+}
+
+.saved-filter-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.saved-filter-count {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+@media (max-width: 600px) {
+  .saved-filter-input {
+    flex: 1 1 140px;
+  }
+}
+
+/* ── My Resumes numbering + paging ── */
+
+.saved-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 22px;
+  padding: 0 6px;
+  margin-right: 8px;
+  border-radius: 6px;
+  background: var(--accent-glow);
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 700;
+  vertical-align: 1px;
+}
+
+.saved-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.saved-pager-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.saved-pager .btn-tracker:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.saved-page-info {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}

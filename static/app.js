@@ -1185,24 +1185,178 @@ async function saveResumeToServer(jd, jobUrl, atsScore) {
   }
 }
 
-async function loadMyResumes() {
-  if (!savedListEl) return;
+let savedResumesCache = [];   // last list from the server; the applied filter works on it
+let savedVersion = "";        // server's hash of that list — polling sends it back
+let savedLoading = false;
+let savedPage = 1;
+let savedPageSize = parseInt(loadFromStorage("rt_saved_page_size"), 10) || 10;
+
+// poll=true asks the server "anything new since my version?" — an unchanged list comes
+// back as a tiny reply and nothing re-renders.
+async function loadMyResumes(poll = false) {
+  if (!savedListEl || (poll && savedLoading)) return;
+  savedLoading = true;
   try {
-    const res = await authFetch("/api/resumes");
+    const url = poll && savedVersion ? "/api/resumes?v=" + encodeURIComponent(savedVersion) : "/api/resumes";
+    const res = await authFetch(url);
     const json = await res.json();
     if (!res.ok || json.error) throw new Error(json.error || "Could not load resumes.");
-    renderSavedResumes(json.resumes || []);
+    if (json.unchanged) return;
+    savedResumesCache = json.resumes || [];
+    savedVersion = json.version || "";
+    refreshSavedList();
   } catch (err) {
     console.warn(err.message);
+  } finally {
+    savedLoading = false;
   }
 }
 
-function renderSavedResumes(list) {
+// Live sync: every tab signed in to this account sees status changes, new resumes and
+// deletions from the others within a few seconds, without refreshing. (Vercel's
+// serverless functions can't hold sockets open, so this polls.)
+const SAVED_POLL_MS = 5000;
+setInterval(() => {
+  if (!document.hidden) loadMyResumes(true);
+}, SAVED_POLL_MS);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) loadMyResumes(true);
+});
+
+// ── Applied-in-range filter ──
+const appliedFromInput = document.getElementById("applied-from");
+const appliedToInput = document.getElementById("applied-to");
+const appliedCountEl = document.getElementById("applied-count");
+
+function appliedRange() {
+  const from = appliedFromInput.value ? new Date(appliedFromInput.value) : null;
+  const to = appliedToInput.value ? new Date(appliedToInput.value) : null;
+  return { from, to, active: !!(from || to) };
+}
+
+function inAppliedRange(r, range) {
+  if (!r.applied_at) return false;
+  const t = new Date(r.applied_at);
+  return (!range.from || t >= range.from) && (!range.to || t <= range.to);
+}
+
+// With a date range set, only jobs applied inside it are listed (and counted).
+function refreshSavedList() {
+  const range = appliedRange();
+  // Numbers come from the FULL list (newest = 1), so a resume keeps the same number
+  // when filtered or paged, and every session of the account shows the same numbers.
+  const numberOf = new Map(savedResumesCache.map((r, i) => [r.id, i + 1]));
+  const list = range.active ? savedResumesCache.filter((r) => inAppliedRange(r, range)) : savedResumesCache;
+  const pages = Math.max(1, Math.ceil(list.length / savedPageSize));
+  savedPage = Math.min(Math.max(1, savedPage), pages);
+  const start = (savedPage - 1) * savedPageSize;
+  renderSavedResumes(list.slice(start, start + savedPageSize), range.active, numberOf, list.length);
+  renderSavedPager(list.length, pages);
+  if (range.active) {
+    appliedCountEl.textContent = `${list.length} job${list.length === 1 ? "" : "s"} applied in this range`;
+  } else {
+    const total = savedResumesCache.filter((r) => r.applied_at).length;
+    appliedCountEl.textContent = total ? `${total} applied in total` : "";
+  }
+}
+
+// datetime-local wants "YYYY-MM-DDTHH:MM" in local time.
+function toLocalInputValue(d) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// ── Paging ──
+const savedPageSizeSel = document.getElementById("saved-page-size");
+savedPageSizeSel.value = String(savedPageSize);
+if (savedPageSizeSel.value !== String(savedPageSize)) {   // stored size no longer offered
+  savedPageSize = 10;
+  savedPageSizeSel.value = "10";
+}
+
+function renderSavedPager(total, pages) {
+  document.getElementById("saved-pager").style.display = total ? "" : "none";
+  const first = total ? (savedPage - 1) * savedPageSize + 1 : 0;
+  const last = Math.min(savedPage * savedPageSize, total);
+  document.getElementById("saved-page-info").textContent = `${first}–${last} of ${total} · Page ${savedPage} of ${pages}`;
+  document.getElementById("saved-prev").disabled = savedPage <= 1;
+  document.getElementById("saved-next").disabled = savedPage >= pages;
+}
+
+function goToSavedPage(page) {
+  savedPage = page;
+  refreshSavedList();
+  document.getElementById("saved-section").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+savedPageSizeSel.addEventListener("change", () => {
+  savedPageSize = parseInt(savedPageSizeSel.value, 10) || 10;
+  saveToStorage("rt_saved_page_size", String(savedPageSize));
+  savedPage = 1;
+  refreshSavedList();
+});
+document.getElementById("saved-prev").addEventListener("click", () => goToSavedPage(savedPage - 1));
+document.getElementById("saved-next").addEventListener("click", () => goToSavedPage(savedPage + 1));
+
+function onAppliedRangeChange() {
+  savedPage = 1;
+  refreshSavedList();
+}
+
+[appliedFromInput, appliedToInput].forEach((el) => el.addEventListener("change", onAppliedRangeChange));
+document.getElementById("applied-today-btn").addEventListener("click", () => {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date();
+  end.setHours(23, 59, 0, 0);
+  appliedFromInput.value = toLocalInputValue(start);
+  appliedToInput.value = toLocalInputValue(end);
+  onAppliedRangeChange();
+});
+document.getElementById("applied-clear-btn").addEventListener("click", () => {
+  appliedFromInput.value = "";
+  appliedToInput.value = "";
+  onAppliedRangeChange();
+});
+
+async function setResumeStatus(r, status, selectEl) {
+  const previous = r.status || "";
+  try {
+    const res = await authFetch("/api/resumes/" + encodeURIComponent(r.id), {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    const json = await res.json();
+    if (!res.ok || json.error) throw new Error(json.error || "Could not update status.");
+    r.status = json.status;
+    r.applied_at = json.applied_at;
+    refreshSavedList();
+  } catch (err) {
+    selectEl.value = previous;
+    showError(err.message);
+  }
+}
+
+function formatSavedDateTime(iso) {
+  try {
+    return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+  } catch { return iso; }
+}
+
+const SAVED_EMPTY_DEFAULT = savedEmptyEl ? savedEmptyEl.textContent : "";
+
+function renderSavedResumes(list, filtered = false, numberOf = new Map(), total = list.length) {
   if (!savedListEl) return;
+  // Live sync re-renders the list; keep whatever the user had ticked.
+  const wasSelected = new Set(getSelectedResumeIds());
   savedListEl.innerHTML = "";
-  if (savedCountEl) savedCountEl.textContent = list.length ? `(${list.length})` : "";
+  if (savedCountEl) savedCountEl.textContent = total ? `(${total})` : "";
   if (!list.length) {
-    if (savedEmptyEl) savedEmptyEl.style.display = "";
+    if (savedEmptyEl) {
+      savedEmptyEl.textContent = filtered ? "No jobs applied in this date range." : SAVED_EMPTY_DEFAULT;
+      savedEmptyEl.style.display = "";
+    }
     return;
   }
   if (savedEmptyEl) savedEmptyEl.style.display = "none";
@@ -1211,11 +1365,13 @@ function renderSavedResumes(list) {
     const card = document.createElement("div");
     card.className = "saved-card";
     if (r.id === currentResumeId) card.classList.add("active");
+    if (r.status) card.classList.add("status-" + r.status);
 
     const sel = document.createElement("input");
     sel.type = "checkbox";
     sel.className = "saved-select";
     sel.dataset.id = r.id;
+    sel.checked = wasSelected.has(r.id);
     sel.addEventListener("change", updateBulkButtons);
     card.appendChild(sel);
 
@@ -1223,8 +1379,10 @@ function renderSavedResumes(list) {
     info.className = "saved-info";
     const titleLine = [r.company, r.title].filter(Boolean).join(" · ") || r.name || "Untitled resume";
     info.innerHTML =
-      `<div class="saved-title">${esc(titleLine)}</div>` +
-      `<div class="saved-meta">${esc(formatSavedDate(r.created_at))}</div>`;
+      `<div class="saved-title"><span class="saved-num">${numberOf.get(r.id) || ""}</span>${esc(titleLine)}</div>` +
+      `<div class="saved-meta">${esc(formatSavedDate(r.created_at))}` +
+      (r.applied_at ? ` · <span class="saved-applied">Applied ${esc(formatSavedDateTime(r.applied_at))}</span>` : "") +
+      `</div>`;
     card.appendChild(info);
 
     const actions = document.createElement("div");
@@ -1260,6 +1418,20 @@ function renderSavedResumes(list) {
       actions.appendChild(applyBtn);
     }
 
+    const statusSel = document.createElement("select");
+    statusSel.className = "status-select";
+    statusSel.title = "Application status";
+    [["", "Status"], ["applied", "Applied"], ["closed", "Closed"]].forEach(([v, label]) => {
+      const opt = document.createElement("option");
+      opt.value = v;
+      opt.textContent = label;
+      statusSel.appendChild(opt);
+    });
+    statusSel.value = r.status || "";
+    statusSel.dataset.status = r.status || "";
+    statusSel.addEventListener("change", () => setResumeStatus(r, statusSel.value, statusSel));
+    actions.appendChild(statusSel);
+
     const delBtn = document.createElement("button");
     delBtn.className = "saved-delete-btn";
     delBtn.innerHTML = "&#x2715;";
@@ -1272,7 +1444,7 @@ function renderSavedResumes(list) {
   });
 
   const selectAll = document.getElementById("saved-selectall");
-  if (selectAll) selectAll.checked = false;
+  if (selectAll) selectAll.checked = list.length > 0 && list.every((r) => wasSelected.has(r.id));
   updateBulkButtons();
 }
 
@@ -1455,7 +1627,7 @@ function formatSavedDate(iso) {
 }
 
 const savedRefreshBtn = document.getElementById("saved-refresh-btn");
-if (savedRefreshBtn) savedRefreshBtn.addEventListener("click", loadMyResumes);
+if (savedRefreshBtn) savedRefreshBtn.addEventListener("click", () => loadMyResumes());
 
 const savedDeleteSelectedBtn = document.getElementById("saved-delete-selected-btn");
 if (savedDeleteSelectedBtn) savedDeleteSelectedBtn.addEventListener("click", deleteSelectedResumes);

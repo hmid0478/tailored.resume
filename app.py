@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Resume Tailor Web App — Flask backend."""
 
+import hashlib
 import io
 import json
 import os
 import re
 import traceback
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import requests
@@ -3024,8 +3025,15 @@ def api_list_resumes():
         "company": r.get("company", ""),
         "score": (r.get("ats") or {}).get("score") if isinstance(r.get("ats"), dict) else None,
         "job_url": r.get("job_url", ""),
+        "status": r.get("status", ""),
+        "applied_at": r.get("applied_at", ""),
     } for r in resumes]
-    return jsonify({"success": True, "resumes": summaries})
+    # Every open tab of this account polls this endpoint; the version lets an unchanged
+    # list come back as a tiny "unchanged" reply instead of the whole list.
+    version = hashlib.sha1(json.dumps(summaries, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    if request.args.get("v") == version:
+        return jsonify({"success": True, "unchanged": True, "version": version})
+    return jsonify({"success": True, "resumes": summaries, "version": version})
 
 
 def _clean_job_url(url) -> str:
@@ -3117,6 +3125,35 @@ def api_get_resume(resume_id):
     if not record:
         return jsonify({"error": "Resume not found."}), 404
     return jsonify({"success": True, "resume": record})
+
+
+RESUME_STATUSES = ("", "applied", "closed")
+
+
+@app.route("/api/resumes/<resume_id>", methods=["PATCH"])
+@require_user
+def api_update_resume_status(resume_id):
+    """Set a saved resume's application status. `applied_at` is stamped the first time
+    it is marked Applied and kept if the job later closes, so date filters still count it."""
+    email = request.identity.get("email")
+    data = request.get_json(silent=True) or {}
+    status = (data.get("status") or "").strip().lower()
+    if status not in RESUME_STATUSES:
+        return jsonify({"error": "Status must be applied, closed, or empty."}), 400
+    try:
+        record = STORE.get_resume(email, resume_id)
+        if not record:
+            return jsonify({"error": "Resume not found."}), 404
+        record["status"] = status
+        if status == "applied" and not record.get("applied_at"):
+            record["applied_at"] = datetime.now(timezone.utc).isoformat()
+        elif status == "":
+            record.pop("applied_at", None)
+        STORE.add_resume(email, record)   # same id -> overwrites in place
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"Could not update resume: {e}"}), 500
+    return jsonify({"success": True, "status": status, "applied_at": record.get("applied_at", "")})
 
 
 @app.route("/api/resumes/<resume_id>", methods=["DELETE"])
