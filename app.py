@@ -834,18 +834,15 @@ If the application supports a separate skill-gap report, identify unsupported JD
 
 Returning the original skills section unchanged, or with only cosmetic edits, is a FAILURE. For every JD, perform ALL of the following:
 
-1. **Add JD skills.** Go through every technology, tool, platform, concept, practice, and methodology named in the JD. Add each one to the skills section when ANY of these is true:
-   - It is mentioned or demonstrated anywhere in the original resume (summary, experience, projects, education), even if it was missing from the original skills list.
-   - It is part of the same ecosystem as a technology the candidate demonstrably uses (for example, Express or NestJS for a Node.js backend developer, Jest or Pytest for a candidate who writes automated tests in that language, FastAPI or Flask for a Python backend developer, Helm for a Kubernetes user, CloudWatch for an AWS user).
-   - It is an engineering concept, practice, or methodology that the candidate's documented work clearly involves (for example, microservices, REST API design, system design, CI/CD, code review, unit testing, performance tuning, scalability, observability, Agile/Scrum, cross-functional collaboration, security best practices).
-   Do NOT add a competing platform the candidate has no evidence for (AWS for an Azure-only candidate, Go for a candidate with no Go, Kubernetes for a Docker-only candidate).
+1. **Add ALL JD skills.** Go through every technology, language, framework, library, tool, platform, database, cloud service, concept, practice, and methodology named in the JD, required or preferred, and add EVERY one of them to the skills section, placed in the most fitting category. This applies even when the original resume has no evidence for the skill.
+   **This rule overrides every other skills restriction in this prompt** (Section 6.B Category 3, 6.D, 6.F, Section 17, and any "do not add unsupported skills" wording) for the SKILLS SECTION ONLY. In the summary, experience bullets, and projects, still do not claim hands-on work, achievements, or metrics the resume does not support.
 2. **Use the JD's exact spelling** for every skill (for example, "Node.js" not "Node", "PostgreSQL" not "Postgres", "CI/CD" not "pipelines") and replace the resume's synonyms with the JD's terms.
 3. **Reorder categories** so the category most central to the JD comes first.
 4. **Reorder items inside each category** so JD-matching skills come first, in roughly the order of their importance in the JD.
 5. **Rename category labels** to match the JD's focus when helpful (for example, "Backend & Distributed Systems" becomes "Backend, APIs & Microservices" for an API-heavy backend role). Add a new category when the JD has a clear focus area the existing categories do not cover, and the candidate has supporting skills for it.
 6. **Trim clutter.** Move skills that are irrelevant to this JD to the end of their category, or remove them when they distract, but keep any skill that an experience or project entry depends on.
 
-Keep the same output structure (category + comma-separated items) and a similar overall length, adding at most about 30% more items. Mark every added, renamed, or reworded skill with [[ ]].
+Keep the same output structure (category + comma-separated items). The section may grow as much as needed to include every JD skill. Mark every added, renamed, or reworded skill with [[ ]].
 
 ---
 
@@ -1615,10 +1612,9 @@ def _build_tailor_user_msg(resume_text: str, prompt_text: str, jd_text: str, det
    TypeScript]] services [[serving 10k+ users]]". If an Experience bullet has no [[ ]] marks, you did
    not tailor it — go back and rewrite it. Never mark the name, job title, or contact details.
    Use the exact characters [[ and ]], and always close every [[ with a matching ]].
-9. TAILOR THE SKILLS SECTION (mandatory — follow Section 6.G of the system prompt): ADD the JD's
-   skills, tools, and practices the candidate's resume supports (including ones only shown in
-   experience/projects, same-ecosystem tools, and engineering practices their work involves),
-   use the JD's exact spelling, put the most JD-relevant category first, and put JD-matching
+9. TAILOR THE SKILLS SECTION (mandatory — follow Section 6.G of the system prompt): ADD EVERY
+   technology, tool, platform, and practice named in the JD to the Skills section (this overrides
+   rule 5's "never invent" for the Skills section only), use the JD's exact spelling, put the most JD-relevant category first, and put JD-matching
    items first inside each category. Returning the Skills section unchanged is WRONG."""
 
     user_msg = f"""Here are the two inputs:
@@ -2583,9 +2579,8 @@ def tailor_resume(
         print("[tailor-guard] skills section unchanged; retrying with a skills rewrite demand.")
         extra = (
             "MANDATORY FIX — you left the SKILLS section unchanged. Rewrite it per Section 6.G: ADD "
-            "the job description's skills, tools, and practices that the candidate's resume supports "
-            "(including ones only shown in experience/projects, same-ecosystem tools, and engineering "
-            "practices their work involves), use the JD's exact spelling, put the most JD-relevant "
+            "EVERY technology, tool, platform, and practice named in the job description to the "
+            "Skills section, use the JD's exact spelling, put the most JD-relevant "
             "category first and JD-matching items first in each category, and mark changes with [[ ]]. "
             "Keep everything else as tailored. Return the full resume now."
         )
