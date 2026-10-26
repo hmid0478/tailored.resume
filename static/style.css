@@ -2009,3 +2009,105 @@ mark.tailor-change { background: #fde047; color: #1a1a1a; padding: 0 1px; border
   padding: 9px 16px;
   font-size: 0.9rem;
 }
+
+/* ── Job link inputs ── */
+
+.jd-url-input,
+.batch-url {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.82rem;
+  padding: 7px 10px;
+  font-family: inherit;
+}
+
+.batch-url {
+  margin-top: 8px;
+  background: var(--surface);
+}
+
+.jd-url-input:focus,
+.batch-url:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.btn-apply {
+  background: var(--success);
+  color: #0f1117;
+}
+
+.btn-apply:hover {
+  filter: brightness(1.1);
+}
+
+/* ── Resume preview popup ── */
+
+.results-section.active {
+  display: flex;
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 32px 16px;
+  overflow-y: auto;
+  background: rgba(5, 6, 10, 0.75);
+}
+
+.results-dialog {
+  position: relative;
+  width: 100%;
+  max-width: 1100px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+}
+
+.results-close-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 1rem;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.results-close-btn:hover {
+  border-color: var(--error);
+  color: var(--error);
+}
+
+.results-dialog .results-header {
+  padding-right: 44px;
+}
+
+body.modal-open {
+  overflow: hidden;
+}
+
+.error-toast.notice {
+  background: #13261f;
+  border-color: var(--success);
+  color: var(--success);
+}
+
+@media (max-width: 600px) {
+  .results-section.active {
+    padding: 0;
+  }
+  .results-dialog {
+    border-radius: 0;
+    padding: 16px;
+  }
+}

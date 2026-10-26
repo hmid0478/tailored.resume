@@ -3023,8 +3023,19 @@ def api_list_resumes():
         "title": r.get("title", ""),
         "company": r.get("company", ""),
         "score": (r.get("ats") or {}).get("score") if isinstance(r.get("ats"), dict) else None,
+        "job_url": r.get("job_url", ""),
     } for r in resumes]
     return jsonify({"success": True, "resumes": summaries})
+
+
+def _clean_job_url(url) -> str:
+    """Optional link to the job posting. Only http(s) — it ends up behind an Apply button."""
+    url = (url or "").strip() if isinstance(url, str) else ""
+    if not url:
+        return ""
+    if not re.match(r"^https?://", url, re.I):
+        url = "https://" + url
+    return url if re.match(r"^https?://[^\s/]+\.[^\s]+$", url, re.I) else ""
 
 
 @app.route("/api/resumes", methods=["POST"])
@@ -3042,6 +3053,7 @@ def api_save_resume():
         "jd": data.get("jd") or "",
         "data": resume_data,
         "ats": data.get("ats") or None,
+        "job_url": _clean_job_url(data.get("job_url")),
     }
     try:
         # One resume per (company + job title): if a resume for this exact company AND

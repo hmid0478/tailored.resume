@@ -87,6 +87,7 @@
         <div class="top-col input-card jd-card">
           <h3>Job Description <span class="jd-badge">Changes each application</span></h3>
           <textarea id="jd-text" rows="7" placeholder="Paste the full job description here."></textarea>
+          <input type="url" id="jd-url" class="jd-url-input" placeholder="Job link (optional) — adds an Apply button" autocomplete="off" />
           <button type="submit" class="btn btn-primary btn-block">Tailor My Resume</button>
         </div>
 
@@ -188,10 +189,12 @@
       </div>
     </div>
 
-    <!-- Results -->
-    <div class="results-section" id="results-section">
+    <!-- Results (popup — opened from My Resumes → Open) -->
+    <div class="results-section" id="results-section" role="dialog" aria-modal="true" aria-labelledby="results-title">
+     <div class="results-dialog">
+      <button type="button" class="results-close-btn" id="results-close-btn" title="Close" aria-label="Close">&#x2715;</button>
       <div class="results-header">
-        <h2>Tailored Resume</h2>
+        <h2 id="results-title">Tailored Resume</h2>
         <div class="download-controls">
           <select id="template-select" class="template-select">
             <option value="minimal_clean">Minimal Clean</option>
@@ -235,6 +238,7 @@
         <div class="preview-legend"><mark class="tailor-change">Yellow highlight</mark> = text tailored to this job. It shows only here — the downloaded PDF is clean.</div>
         <div class="resume-preview" id="resume-preview"></div>
       </div>
+     </div>
     </div>
 
     <!-- ═══════════════════════════════════════════

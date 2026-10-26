@@ -437,6 +437,9 @@ baseUrlInput.addEventListener("input", () => {
 document.getElementById("jd-text").addEventListener("input", (e) => {
   saveToStorage(STORAGE_KEYS.jd, e.target.value);
 });
+document.getElementById("jd-url").addEventListener("input", (e) => {
+  saveToStorage(STORAGE_KEYS.jdUrl, e.target.value);
+});
 document.getElementById("prompt-text").addEventListener("input", (e) => {
   saveToStorage(STORAGE_KEYS.promptText, e.target.value);
   updateSetupStatus();
@@ -472,12 +475,43 @@ function stopLoadingSteps() {
 
 // ── Show error ──
 function showError(msg) {
+  errorToast.classList.remove("notice");
   errorToast.textContent = msg;
   errorToast.style.display = "block";
   setTimeout(() => {
     errorToast.style.display = "none";
   }, 6000);
 }
+
+function showNotice(msg) {
+  errorToast.textContent = msg;
+  errorToast.classList.add("notice");
+  errorToast.style.display = "block";
+  setTimeout(() => {
+    errorToast.style.display = "none";
+    errorToast.classList.remove("notice");
+  }, 5000);
+}
+
+// ── Resume preview popup ──
+function openResultsModal() {
+  resultsSection.classList.add("active");
+  document.body.classList.add("modal-open");
+  resultsSection.scrollTop = 0;
+}
+
+function closeResultsModal() {
+  resultsSection.classList.remove("active");
+  document.body.classList.remove("modal-open");
+}
+
+document.getElementById("results-close-btn").addEventListener("click", closeResultsModal);
+resultsSection.addEventListener("click", (e) => {
+  if (e.target === resultsSection) closeResultsModal();   // click on the dim backdrop
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && resultsSection.classList.contains("active")) closeResultsModal();
+});
 
 // ── Restore file from localStorage into a file input ──
 function restoreFileInput(fileInput, nameDisplay, fileNameKey, fileContentKey) {
@@ -506,6 +540,7 @@ form.addEventListener("submit", async (e) => {
   const model = getActiveModel();
   const baseUrl = getActiveBaseUrl();
   const jd = document.getElementById("jd-text").value.trim();
+  const jobUrl = document.getElementById("jd-url").value.trim();
 
   const meta = getProviderMeta(provider);
   const isLocal = provider === "ollama" || (provider === "openai_compatible" && baseUrl.includes("localhost"));
@@ -538,7 +573,7 @@ form.addEventListener("submit", async (e) => {
 
   // Show loading
   loadingOverlay.classList.add("active");
-  resultsSection.classList.remove("active");
+  closeResultsModal();
   startLoadingSteps();
 
   try {
@@ -563,15 +598,13 @@ form.addEventListener("submit", async (e) => {
     renderResults(tailoredData);
     showTailorWarning(json.warning);
     showAtsScore(json.ats_score);
-    resultsSection.classList.add("active");
 
-    // Persist to the user's private, server-side resume library.
+    // Persist to the user's private, server-side resume library. The preview does NOT
+    // pop up here — the user opens it from My Resumes when they want to look.
     currentResumeId = null;
-    saveResumeToServer(jd);
-
-    setTimeout(() => {
-      resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 100);
+    saveResumeToServer(jd, jobUrl, json.ats_score);
+    if (json.warning) showError(json.warning);
+    else showNotice("Resume ready — click Open in My Resumes to view it.");
   } catch (err) {
     showError(err.message);
   } finally {
@@ -1086,7 +1119,7 @@ const savedListEl = document.getElementById("saved-list");
 const savedEmptyEl = document.getElementById("saved-empty");
 const savedCountEl = document.getElementById("saved-count");
 
-async function saveResumeToServer(jd) {
+async function saveResumeToServer(jd, jobUrl, atsScore) {
   if (!tailoredData) return;
   try {
     const res = await authFetch("/api/resumes", {
@@ -1099,6 +1132,8 @@ async function saveResumeToServer(jd) {
         company: lastJobMeta.company || (dlCompanyInput && dlCompanyInput.value.trim()) || "",
         jd: jd || savedJDText || "",
         data: tailoredData,
+        job_url: jobUrl || "",
+        ats: typeof atsScore === "number" ? { score: atsScore } : null,
       }),
     });
     const json = await res.json();
@@ -1176,6 +1211,17 @@ function renderSavedResumes(list) {
     qaBtn.addEventListener("click", () => openSavedResumeQA(r.id));
     actions.appendChild(qaBtn);
 
+    if (r.job_url) {
+      const applyBtn = document.createElement("a");
+      applyBtn.className = "btn btn-apply btn-sm";
+      applyBtn.textContent = "Apply";
+      applyBtn.href = r.job_url;
+      applyBtn.target = "_blank";
+      applyBtn.rel = "noopener noreferrer";
+      applyBtn.title = r.job_url;
+      actions.appendChild(applyBtn);
+    }
+
     const delBtn = document.createElement("button");
     delBtn.className = "saved-delete-btn";
     delBtn.innerHTML = "&#x2715;";
@@ -1243,7 +1289,8 @@ async function deleteAllResumes() {
   }
 }
 
-async function openSavedResume(id) {
+// show=false loads the resume as Q&A context without popping the preview.
+async function openSavedResume(id, show = true) {
   try {
     const res = await authFetch("/api/resumes/" + encodeURIComponent(id));
     const json = await res.json();
@@ -1264,10 +1311,10 @@ async function openSavedResume(id) {
     saveToStorage(STORAGE_KEYS.jobMeta, lastJobMeta);
 
     renderResults(tailoredData);
-    showAtsScore(null);  // score belongs to the last fresh tailoring, not this saved one
-    resultsSection.classList.add("active");
+    showTailorWarning("");
+    showAtsScore(rec.ats && rec.ats.score);
     loadMyResumes();  // refresh active highlight
-    resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (show) openResultsModal();
   } catch (err) {
     showError(err.message);
   }
@@ -1344,7 +1391,7 @@ async function downloadSavedResume(id, btn) {
 
 // Open a saved resume AND jump to the Application Q&A panel for it.
 async function openSavedResumeQA(id) {
-  await openSavedResume(id);   // loads data + its stored JD into the preview + Q&A context
+  await openSavedResume(id, false);   // loads data + its stored JD as Q&A context, no popup
   const qa = document.getElementById("qa-panel");
   if (qa) qa.scrollIntoView({ behavior: "smooth", block: "start" });
   document.getElementById("qa-questions").focus({ preventScroll: true });
@@ -1400,6 +1447,7 @@ function collectBatchJobs() {
     company: c.querySelector(".batch-company").value.trim(),
     title: c.querySelector(".batch-title").value.trim(),
     jd: c.querySelector(".batch-jd").value.trim(),
+    url: c.querySelector(".batch-url").value.trim(),
   }));
 }
 
@@ -1408,7 +1456,7 @@ function saveBatchJobs() {
 }
 
 function addBatchJob(job) {
-  job = job || { company: "", title: "", jd: "" };
+  job = job || { company: "", title: "", jd: "", url: "" };
   const card = document.createElement("div");
   card.className = "batch-job";
   card.innerHTML =
@@ -1418,10 +1466,12 @@ function addBatchJob(job) {
     '  <button type="button" class="batch-remove" title="Remove job">&#x2715;</button>' +
     '</div>' +
     '<textarea class="batch-jd" rows="4" placeholder="Paste the job description for this job..."></textarea>' +
+    '<input type="url" class="batch-url" placeholder="Job link (optional) — adds an Apply button" autocomplete="off" />' +
     '<div class="batch-job-status"></div>';
   card.querySelector(".batch-company").value = job.company || "";
   card.querySelector(".batch-title").value = job.title || "";
   card.querySelector(".batch-jd").value = job.jd || "";
+  card.querySelector(".batch-url").value = job.url || "";
   card.querySelectorAll("input, textarea").forEach((el) => el.addEventListener("input", saveBatchJobs));
   card.querySelector(".batch-remove").addEventListener("click", () => {
     card.remove();
@@ -1461,6 +1511,7 @@ async function generateAllResumes() {
     const jd = card.querySelector(".batch-jd").value.trim();
     const company = card.querySelector(".batch-company").value.trim();
     const title = card.querySelector(".batch-title").value.trim();
+    const jobUrl = card.querySelector(".batch-url").value.trim();
     const statusEl = card.querySelector(".batch-job-status");
     statusEl.textContent = "Generating…";
     statusEl.className = "batch-job-status generating";
@@ -1474,7 +1525,11 @@ async function generateAllResumes() {
       const saveRes = await authFetch("/api/resumes", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: (json.data && json.data.name) || "", title: finalTitle, company: finalCompany, jd, data: json.data }),
+        body: JSON.stringify({
+          name: (json.data && json.data.name) || "", title: finalTitle, company: finalCompany, jd, data: json.data,
+          job_url: jobUrl,
+          ats: typeof json.ats_score === "number" ? { score: json.ats_score } : null,
+        }),
       });
       const saveJson = await saveRes.json();
       if (!saveRes.ok || saveJson.error) throw new Error(saveJson.error || "Could not save resume.");
@@ -1561,6 +1616,8 @@ function restoreState() {
   if (savedLinkedin) document.getElementById("linkedin-url").value = savedLinkedin;
 
   if (savedJD) document.getElementById("jd-text").value = savedJD;
+  const savedJdUrl = loadFromStorage(STORAGE_KEYS.jdUrl);
+  if (savedJdUrl) document.getElementById("jd-url").value = savedJdUrl;
   if (savedPrompt) document.getElementById("prompt-text").value = savedPrompt;
 
   // One-shot cleanup: drop any leftover cover-letter localStorage from prior versions.
@@ -1600,7 +1657,6 @@ function restoreState() {
     tailoredData = savedTailored;
     savedJDText = savedJDContext || "";
     renderResults(tailoredData);
-    resultsSection.classList.add("active");
   }
 
   // Update setup status (will auto-collapse if ready)
