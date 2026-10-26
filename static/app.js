@@ -87,18 +87,36 @@ function applyJobMetaToFilenameFields() {
   _updateFilenamePreview();
 }
 
-// Provider metadata: default model, key placeholder, whether base_url is shown, and a
-// list of suggested models (shown in the Model dropdown for that provider).
+// Provider metadata: default model, key placeholder, whether base_url is shown, and the
+// suggested models (shown in the Model dropdown) tagged with a cost tier.
+// Tiers: "lowest" / "low" = fewest billed tokens per resume; "standard" / "premium" = best writing.
 const PROVIDER_META = {
-  anthropic:  { label: "Anthropic API Key", model: "claude-sonnet-4-5-20250929",   keyPh: "sk-ant-api03-...",  needsBase: false, defaultBase: "", models: ["claude-sonnet-4-5-20250929", "claude-opus-4-1", "claude-3-5-haiku-latest"] },
-  gemini:     { label: "Gemini API Key",    model: "gemini-2.5-flash",             keyPh: "AIza...",           needsBase: false, defaultBase: "", models: ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.5-flash-lite"] },
-  openai:     { label: "OpenAI API Key",    model: "gpt-4o",                       keyPh: "sk-...",            needsBase: false, defaultBase: "", models: ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4-turbo"] },
-  openrouter: { label: "OpenRouter API Key", model: "openrouter/auto",             keyPh: "sk-or-...",         needsBase: false, defaultBase: "", models: ["openrouter/auto", "openai/gpt-4o", "anthropic/claude-3.5-sonnet", "google/gemini-2.5-flash"] },
-  groq:       { label: "Groq API Key",      model: "llama-3.3-70b-versatile",      keyPh: "gsk_...",           needsBase: false, defaultBase: "", models: ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"] },
-  together:   { label: "Together AI API Key", model: "meta-llama/Llama-3.3-70B-Instruct-Turbo", keyPh: "...",  needsBase: false, defaultBase: "", models: ["meta-llama/Llama-3.3-70B-Instruct-Turbo", "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"] },
-  ollama:     { label: "API Key (optional)", model: "llama3.1",                    keyPh: "(leave blank for local)", needsBase: true, defaultBase: "http://localhost:11434/v1", models: ["llama3.1", "llama3.2", "mistral", "qwen2.5"] },
+  anthropic:  { label: "Anthropic API Key", model: "claude-sonnet-4-5-20250929",   keyPh: "sk-ant-api03-...",  needsBase: false, defaultBase: "",
+    models: [["claude-3-5-haiku-latest", "lowest"], ["claude-haiku-4-5", "low"], ["claude-sonnet-4-5-20250929", "standard"], ["claude-opus-4-1", "premium"]] },
+  gemini:     { label: "Gemini API Key",    model: "gemini-2.5-flash",             keyPh: "AIza...",           needsBase: false, defaultBase: "",
+    models: [["gemini-2.5-flash-lite", "lowest"], ["gemini-2.5-flash", "low"], ["gemini-2.5-pro", "standard"]] },
+  openai:     { label: "OpenAI API Key",    model: "gpt-4o",                       keyPh: "sk-...",            needsBase: false, defaultBase: "",
+    models: [["gpt-5-nano", "lowest"], ["gpt-4.1-nano", "lowest"], ["gpt-5-mini", "low"], ["gpt-4o-mini", "low"], ["gpt-4.1-mini", "low"], ["o4-mini", "low"],
+             ["gpt-5", "standard"], ["gpt-4.1", "standard"], ["gpt-4o", "standard"]] },
+  openrouter: { label: "OpenRouter API Key", model: "openrouter/auto",             keyPh: "sk-or-...",         needsBase: false, defaultBase: "",
+    models: [["openai/gpt-5-nano", "lowest"], ["openai/gpt-4o-mini", "low"], ["google/gemini-2.5-flash", "low"], ["openrouter/auto", "standard"], ["openai/gpt-4o", "standard"], ["anthropic/claude-3.5-sonnet", "standard"]] },
+  groq:       { label: "Groq API Key",      model: "llama-3.3-70b-versatile",      keyPh: "gsk_...",           needsBase: false, defaultBase: "",
+    models: [["llama-3.1-8b-instant", "lowest"], ["llama-3.3-70b-versatile", "low"]] },
+  together:   { label: "Together AI API Key", model: "meta-llama/Llama-3.3-70B-Instruct-Turbo", keyPh: "...",  needsBase: false, defaultBase: "",
+    models: [["meta-llama/Llama-3.3-70B-Instruct-Turbo", "low"], ["meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo", "low"]] },
+  ollama:     { label: "API Key (optional)", model: "llama3.1",                    keyPh: "(leave blank for local)", needsBase: true, defaultBase: "http://localhost:11434/v1",
+    models: [["llama3.1", "local"], ["llama3.2", "local"], ["mistral", "local"], ["qwen2.5", "local"]] },
   openai_compatible: { label: "API Key",    model: "",                             keyPh: "...",               needsBase: true, defaultBase: "http://localhost:1234/v1", models: [] },
 };
+
+const MODEL_TIERS = {
+  lowest:   { tag: "lowest cost", hint: "Fewest billed tokens. The ATS keyword guard keeps your score high, but wording may be plainer." },
+  low:      { tag: "low cost",    hint: "Low token cost with good tailoring quality." },
+  standard: { tag: "standard",    hint: "Best tailoring quality for the price." },
+  premium:  { tag: "premium",     hint: "Highest quality and highest token cost." },
+  local:    { tag: "free, local", hint: "Runs on your machine. No API cost." },
+};
+const CUSTOM_MODEL = "__custom__";
 
 // All app state is namespaced per signed-in user (see USER_PREFIX).
 function _nsKey(key) { return USER_PREFIX + key; }
@@ -135,6 +153,9 @@ const downloadBtn = document.getElementById("download-btn");
 // ── LinkedIn quick-copy ──
 // LinkedIn bar: save on edit, copy on click
 const linkedinInput = document.getElementById("linkedin-url");
+linkedinInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") e.preventDefault();
+});
 linkedinInput.addEventListener("input", () => {
   saveToStorage("rt_linkedin_url", linkedinInput.value);
 });
@@ -302,6 +323,8 @@ document.querySelectorAll(".input-toggle").forEach((toggle) => {
 // ── Provider / model / key handling ──
 const providerSelect = document.getElementById("ai-provider");
 const modelInput = document.getElementById("ai-model");
+const modelSelect = document.getElementById("ai-model-select");
+const modelCostHint = document.getElementById("model-cost-hint");
 const keyInput = document.getElementById("provider-key");
 const keyLabelEl = document.getElementById("provider-key-label");
 const baseUrlInput = document.getElementById("base-url");
@@ -338,16 +361,21 @@ function updateProviderUI() {
   modelInput.value = models[provider] || meta.model || "";
   modelInput.placeholder = meta.model || "model name";
 
-  // Populate the Model dropdown with this provider's suggested models.
-  const dl = document.getElementById("ai-model-list");
-  if (dl) {
-    dl.innerHTML = "";
-    (meta.models || []).forEach((m) => {
-      const opt = document.createElement("option");
-      opt.value = m;
-      dl.appendChild(opt);
-    });
-  }
+  // Populate the Model dropdown with this provider's suggested models + their cost tier.
+  modelSelect.innerHTML = "";
+  (meta.models || []).forEach(([id, tier]) => {
+    const opt = document.createElement("option");
+    opt.value = id;
+    opt.textContent = `${id} — ${MODEL_TIERS[tier].tag}`;
+    modelSelect.appendChild(opt);
+  });
+  const customOpt = document.createElement("option");
+  customOpt.value = CUSTOM_MODEL;
+  customOpt.textContent = "Custom model…";
+  modelSelect.appendChild(customOpt);
+  const known = (meta.models || []).some(([id]) => id === modelInput.value);
+  modelSelect.value = known ? modelInput.value : CUSTOM_MODEL;
+  updateModelUI();
 
   // Base URL: only show for providers that need a custom endpoint
   if (meta.needsBase) {
@@ -366,6 +394,27 @@ providerSelect.addEventListener("change", () => {
   pushSettingsToServer();
 });
 
+// The text input stays the source of truth for the model; the dropdown just fills it.
+function updateModelUI() {
+  const isCustom = modelSelect.value === CUSTOM_MODEL;
+  modelInput.style.display = isCustom ? "" : "none";
+  const entry = (getProviderMeta(providerSelect.value).models || []).find(([id]) => id === modelInput.value);
+  modelCostHint.textContent = entry ? MODEL_TIERS[entry[1]].hint : "";
+  modelCostHint.dataset.tier = entry ? entry[1] : "";
+}
+
+modelSelect.addEventListener("change", () => {
+  if (modelSelect.value !== CUSTOM_MODEL) {
+    modelInput.value = modelSelect.value;
+  } else {
+    modelInput.value = "";
+    modelInput.focus();
+  }
+  setProviderMap(STORAGE_KEYS.providerModels, providerSelect.value, modelInput.value);
+  updateModelUI();
+  pushSettingsToServer();
+});
+
 function getActiveApiKey() { return keyInput.value.trim(); }
 function getActiveModel() { return modelInput.value.trim(); }
 function getActiveBaseUrl() { return baseUrlInput.value.trim(); }
@@ -378,6 +427,7 @@ keyInput.addEventListener("input", () => {
 });
 modelInput.addEventListener("input", () => {
   setProviderMap(STORAGE_KEYS.providerModels, providerSelect.value, modelInput.value);
+  updateModelUI();
   pushSettingsToServer();
 });
 baseUrlInput.addEventListener("input", () => {
@@ -512,6 +562,7 @@ form.addEventListener("submit", async (e) => {
     applyJobMetaToFilenameFields();
     renderResults(tailoredData);
     showTailorWarning(json.warning);
+    showAtsScore(json.ats_score);
     resultsSection.classList.add("active");
 
     // Persist to the user's private, server-side resume library.
@@ -614,6 +665,19 @@ function showTailorWarning(msg) {
     el.style.display = "none";
     el.textContent = "";
   }
+}
+
+// ATS keyword-match score computed server-side (JD keywords found in your resume).
+function showAtsScore(score) {
+  const el = document.getElementById("ats-badge");
+  if (!el) return;
+  if (typeof score !== "number") {
+    el.style.display = "none";
+    return;
+  }
+  el.textContent = `ATS keyword match: ${score}%`;
+  el.dataset.level = score >= 90 ? "high" : score >= 80 ? "mid" : "low";
+  el.style.display = "";
 }
 
 // ── Render Results ──
@@ -876,8 +940,9 @@ qaSubmitBtn.addEventListener("click", async () => {
 
   if (!questions) return showError("Please paste at least one question.");
   if (!apiKey && !isLocal) return showError(`Please enter your ${meta.label} above.`);
-  if (!tailoredData) return showError("Please tailor a resume first.");
-  if (!savedJDText) return showError("Job description context is missing. Please tailor a resume first.");
+  if (!tailoredData) return showError("Please tailor a resume first — answers are based on it.");
+  const qaJD = savedJDText || document.getElementById("jd-text").value.trim();
+  if (!qaJD) return showError("Please paste the job description first.");
 
   qaSubmitBtn.disabled = true;
   qaSubmitBtn.textContent = "Generating...";
@@ -894,7 +959,7 @@ qaSubmitBtn.addEventListener("click", async () => {
         model: model,
         base_url: baseUrl,
         questions: questions,
-        jd: savedJDText,
+        jd: qaJD,
         resume: tailoredData,
       }),
     });
@@ -915,49 +980,38 @@ qaSubmitBtn.addEventListener("click", async () => {
   }
 });
 
+// Answers show as short previews on the front page; clicking anywhere on one copies
+// the FULL answer, so the panel stays small.
 function renderQAResults(answers) {
   qaResults.innerHTML = "";
   (answers || []).forEach((item, i) => {
     const card = document.createElement("div");
     card.className = "qa-card";
+    card.title = "Click to copy the full answer";
     card.innerHTML = `
-      <div class="qa-question">
-        <span class="qa-q-label">Q${i + 1}</span>
-        <span>${esc(item.question)}</span>
-      </div>
+      <div class="qa-question"><span class="qa-q-label">Q${i + 1}</span><span>${esc(item.question)}</span></div>
       <div class="qa-answer">${esc(item.answer)}</div>
-      <button class="qa-copy-btn" data-answer="${encodeURIComponent(item.answer)}">Copy answer</button>
+      <span class="qa-copied">Copied!</span>
     `;
+    card.addEventListener("click", () => copyQAAnswer(card, item.answer || ""));
     qaResults.appendChild(card);
   });
+  document.getElementById("qa-hint").style.display = (answers || []).length ? "" : "none";
+}
 
-  qaResults.querySelectorAll(".qa-copy-btn").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const text = decodeURIComponent(btn.dataset.answer);
-      try {
-        await navigator.clipboard.writeText(text);
-        btn.textContent = "Copied!";
-        btn.classList.add("copied");
-        setTimeout(() => {
-          btn.textContent = "Copy answer";
-          btn.classList.remove("copied");
-        }, 2000);
-      } catch {
-        const ta = document.createElement("textarea");
-        ta.value = text;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        ta.remove();
-        btn.textContent = "Copied!";
-        btn.classList.add("copied");
-        setTimeout(() => {
-          btn.textContent = "Copy answer";
-          btn.classList.remove("copied");
-        }, 2000);
-      }
-    });
-  });
+async function copyQAAnswer(card, text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand("copy");
+    ta.remove();
+  }
+  card.classList.add("copied");
+  setTimeout(() => card.classList.remove("copied"), 1500);
 }
 
 // ── User bar / logout ──
@@ -1210,6 +1264,7 @@ async function openSavedResume(id) {
     saveToStorage(STORAGE_KEYS.jobMeta, lastJobMeta);
 
     renderResults(tailoredData);
+    showAtsScore(null);  // score belongs to the last fresh tailoring, not this saved one
     resultsSection.classList.add("active");
     loadMyResumes();  // refresh active highlight
     resultsSection.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1287,13 +1342,12 @@ async function downloadSavedResume(id, btn) {
   }
 }
 
-// Open a saved resume AND jump to the Application Q&A tab for it.
+// Open a saved resume AND jump to the Application Q&A panel for it.
 async function openSavedResumeQA(id) {
   await openSavedResume(id);   // loads data + its stored JD into the preview + Q&A context
-  const qaTabBtn = document.querySelector('.tab-btn[data-tab="tab-qa"]');
-  if (qaTabBtn) qaTabBtn.click();
-  const qa = document.getElementById("tab-qa");
+  const qa = document.getElementById("qa-panel");
   if (qa) qa.scrollIntoView({ behavior: "smooth", block: "start" });
+  document.getElementById("qa-questions").focus({ preventScroll: true });
 }
 
 function formatSavedDate(iso) {

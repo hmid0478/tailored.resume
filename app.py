@@ -1068,10 +1068,46 @@ def _call_openai_compatible(api_key: str, model: str, prompt: str, max_tokens: i
         "max_tokens": max_tokens,
         "temperature": temperature,
     }
+    # OpenAI reasoning models (gpt-5*, o1/o3/o4*) reject max_tokens/temperature. Reasoning
+    # tokens also count against the output budget, so give them headroom and keep effort
+    # "low" — enough to hit the ATS rules without burning tokens.
+    if _is_openai_reasoning_model(model, base_url):
+        kwargs.pop("max_tokens")
+        kwargs.pop("temperature")
+        kwargs["max_completion_tokens"] = max_tokens + 8000
+        kwargs["reasoning_effort"] = "low"
     if json_mode:
         kwargs["response_format"] = {"type": "json_object"}
-    completion = client.chat.completions.create(**kwargs)
+    # Newer models keep changing which params they accept; adapt once per rejected param
+    # instead of failing the whole tailoring.
+    for _ in range(3):
+        try:
+            completion = client.chat.completions.create(**kwargs)
+            break
+        except Exception as e:
+            msg = str(e).lower()
+            if "unsupported" not in msg and "not supported" not in msg:
+                raise
+            if "max_tokens" in msg and "max_tokens" in kwargs:
+                kwargs["max_completion_tokens"] = kwargs.pop("max_tokens")
+            elif "temperature" in msg and "temperature" in kwargs:
+                kwargs.pop("temperature")
+            elif "reasoning_effort" in msg and "reasoning_effort" in kwargs:
+                kwargs.pop("reasoning_effort")
+            else:
+                raise
+    else:
+        completion = client.chat.completions.create(**kwargs)
     return (completion.choices[0].message.content or "").strip()
+
+
+def _is_openai_reasoning_model(model: str, base_url: str) -> bool:
+    if "api.openai.com" not in (base_url or ""):
+        return False
+    m = (model or "").lower().split("/")[-1]
+    if "chat" in m:   # gpt-5-chat-latest is a plain chat model
+        return False
+    return m.startswith("gpt-5") or bool(re.match(r"o\d", m))
 
 
 _AI_UNICODE_REPLACEMENTS = {
@@ -1525,6 +1561,116 @@ def _experience_mostly_verbatim(resume_json: dict, original_text: str) -> bool:
     return verbatim >= len(long_bullets) * 0.6
 
 
+# ─────────────────────────────────────────────
+# ATS keyword guard (model-independent)
+# ─────────────────────────────────────────────
+# Cheaper models follow the prompt's ATS rules less reliably, so we check the result
+# ourselves. We only enforce JD keywords the candidate's ORIGINAL resume already
+# contains — those are honest to include, and dropping them is what tanks ATS scores.
+
+_ATS_STOPWORDS = set("""
+a about above across after again against all also am an and any are as at be because been
+before being below between both but by can could did do does doing down during each either
+etc few for from further had has have having he her here hers him his how i if in into is it
+its itself just may me might more most must my no nor not now of off on once only or other
+our ours out over own per plus same she should so some such than that the their them then
+there these they this those through to too under until up upon us very via was we were what
+when where which while who whom why will with within without would you your yours
+ability able across work working works team teams role roles job position candidate
+candidates experience experienced years year strong excellent good great skills skill
+knowledge understanding including include includes required requirements require
+preferred plus responsibilities responsible duties new using use used well related
+environment company opportunity opportunities join looking seeking ideal etc highly
+must-have nice-to-have proven demonstrated familiarity familiar degree bachelor bachelors
+master masters equivalent relevant field minimum least day days time full part based
+help ensure across world best make making provide providing support supporting
+""".split())
+
+_ATS_TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9+#]*(?:[./-][A-Za-z0-9+#]+)*")
+
+
+def _ats_norm(text: str) -> str:
+    return " " + re.sub(r"\s+", " ", (text or "").replace("[[", "").replace("]]", "")).lower() + " "
+
+
+def _ats_has(term: str, norm_text: str) -> bool:
+    return re.search(r"(?<![a-z0-9])" + re.escape(term) + r"(?![a-z0-9+#])", norm_text) is not None
+
+
+def _ats_keywords(jd_text: str, resume_text: str) -> list[str]:
+    """JD keywords (single terms + two-word phrases) that also appear in the resume."""
+    resume_norm = _ats_norm(resume_text)
+    jd = jd_text or ""
+    tokens = _ATS_TOKEN_RE.findall(jd)
+    terms: dict[str, None] = {}
+    lowered = [t.lower().strip(".-/") for t in tokens]
+    # Single words count only when they look like a skill/tool (Python, AWS, CI/CD,
+    # Node.js, C++) — not plain verbs like "managed", which rewrites rightly change.
+    for m in _ATS_TOKEN_RE.finditer(jd):
+        tok = m.group(0).strip(".-/")
+        low = tok.lower()
+        if len(low) < 2 or low in _ATS_STOPWORDS:
+            continue
+        before = jd[:m.start()].rstrip()
+        sentence_start = not before or before[-1] in ".!?:;\n•*-·"
+        if (any(c.isupper() for c in tok[1:]) or any(c.isdigit() or c in "+#./" for c in tok)
+                or (tok[0].isupper() and not sentence_start)):
+            terms[low] = None
+    for a, b in zip(lowered, lowered[1:]):
+        if a in _ATS_STOPWORDS or b in _ATS_STOPWORDS or len(a) < 2 or len(b) < 2:
+            continue
+        terms[f"{a} {b}"] = None
+    found = [t for t in terms if _ats_has(t, resume_norm)]
+    # Drop single words already covered by a matched phrase so we don't double-count.
+    phrases = [t for t in found if " " in t]
+    singles = [t for t in found if " " not in t and not any(t in p.split() for p in phrases)]
+    return phrases + singles
+
+
+def _resume_json_text(resume: dict) -> str:
+    parts: list[str] = []
+
+    def walk(v):
+        if isinstance(v, str):
+            parts.append(v)
+        elif isinstance(v, dict):
+            for x in v.values():
+                walk(x)
+        elif isinstance(v, list):
+            for x in v:
+                walk(x)
+    walk(resume)
+    return "\n".join(parts)
+
+
+def _ats_missing(resume: dict, keywords: list[str]) -> list[str]:
+    norm = _ats_norm(_resume_json_text(resume))
+    return [k for k in keywords if not _ats_has(k, norm)]
+
+
+def _ats_score(resume: dict, keywords: list[str]) -> int | None:
+    if not keywords:
+        return None
+    return round(100 * (1 - len(_ats_missing(resume, keywords)) / len(keywords)))
+
+
+def _ats_fill_skills(resume: dict, missing: list[str], jd_text: str) -> None:
+    """Last resort: append still-missing single-word skills to the Skills section.
+    Only called with terms from the candidate's own resume, so nothing is invented."""
+    def jd_casing(term):
+        m = re.search(r"(?<![A-Za-z0-9])" + re.escape(term) + r"(?![A-Za-z0-9+#])", jd_text or "", re.I)
+        return m.group(0) if m else term
+    terms = [jd_casing(m) for m in missing if " " not in m][:12]
+    if not terms:
+        return
+    for s in resume.get("sections") or []:
+        if isinstance(s, dict) and s.get("type") == "skills" and isinstance(s.get("items"), list) and s["items"]:
+            last = s["items"][-1]
+            if isinstance(last, dict) and isinstance(last.get("items"), str):
+                last["items"] = (last["items"].rstrip(", ") + ", " + ", ".join(terms)).lstrip(", ")
+            return
+
+
 def _do_tailor_call(api_key, resume_text, prompt_text, jd_text, provider,
                     detected_sections, model, base_url, extra_instruction=""):
     prompt = _build_tailor_user_msg(resume_text, prompt_text, jd_text, detected_sections)
@@ -1620,6 +1766,30 @@ def tailor_resume(
                 print("[tailor-guard] verbatim retry didn't improve; keeping previous response.")
         except Exception as e:
             print(f"[tailor-guard] verbatim retry failed ({e}); keeping previous response.")
+
+    # ATS guard: keep coverage of the JD keywords the candidate genuinely has >= 90%,
+    # whichever model was used.
+    keywords = _ats_keywords(jd_text, resume_text)
+    missing = _ats_missing(data, keywords)
+    if keywords and len(missing) >= 3 and len(missing) / len(keywords) > 0.10:
+        print(f"[ats-guard] {len(missing)}/{len(keywords)} JD keywords dropped; retrying.")
+        extra = (
+            "MANDATORY FIX — ATS keyword coverage is too low. These job-description keywords "
+            "appear in the candidate's ORIGINAL resume but are missing from your output. Work "
+            "EVERY one of them back in (Skills, Summary, or the relevant experience bullets), "
+            "using the exact spelling shown, without inventing anything new:\n"
+            + ", ".join(missing)
+        )
+        try:
+            retry = _do_tailor_call(api_key, resume_text, prompt_text, jd_text, provider,
+                                    detected_sections, model, base_url, extra_instruction=extra)
+            if (len(_ats_missing(retry, keywords)) < len(missing)
+                    and (not detected_sections or _has_all_sections(retry, data))
+                    and _count_result_bullets(retry) >= _count_result_bullets(data) * 0.9):
+                data = retry
+        except Exception as e:
+            print(f"[ats-guard] retry failed ({e}); keeping previous response.")
+        _ats_fill_skills(data, _ats_missing(data, keywords), jd_text)
 
     return data
 
@@ -3136,13 +3306,15 @@ def api_tailor():
         try:
             if _experience_mostly_verbatim(result, resume_text):
                 warning = (f"The AI returned your experience almost unchanged — it did not tailor it. "
-                           f"The model used was '{effective_model}'. If that is 'gpt-4o-mini' (or another "
-                           f"small model), switch to a stronger one like 'gpt-4o' and tailor again.")
+                           f"The model used was '{effective_model}'. If that is a low-cost model "
+                           f"(nano / mini / lite / 8b), switch to a standard one and tailor again.")
         except Exception:
             pass
+        ats_score = _ats_score(result, _ats_keywords(jd_text, resume_text))
 
         return jsonify({"success": True, "data": result, "job_meta": job_meta,
-                        "warning": warning, "model_used": effective_model})
+                        "warning": warning, "model_used": effective_model,
+                        "ats_score": ats_score})
 
     except ValueError as e:
         traceback.print_exc()

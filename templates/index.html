@@ -28,14 +28,7 @@
       <button type="button" class="user-bar-logout" id="logout-btn">Log out</button>
     </div>
 
-    <!-- Quick-copy LinkedIn -->
-    <div class="linkedin-bar" id="linkedin-bar">
-      <span class="linkedin-icon">in</span>
-      <input type="text" class="linkedin-url-input" id="linkedin-url" value="" placeholder="Paste your LinkedIn profile URL here" />
-      <button type="button" class="linkedin-copy-btn" id="linkedin-copy-btn">Copy</button>
-    </div>
-
-    <header>
+    <header class="header-compact">
       <h1>Resume Tailor</h1>
       <p>Upload your resume & prompt once. Just change the JD for each application.</p>
     </header>
@@ -46,33 +39,68 @@
       <input type="text" name="username" tabindex="-1" aria-hidden="true" autocomplete="username" class="autofill-decoy" />
       <input type="password" name="password" tabindex="-1" aria-hidden="true" autocomplete="current-password" class="autofill-decoy" />
 
-      <!-- API Keys -->
-      <div class="api-key-row">
-        <div class="api-key-group api-key-group-provider">
-          <label for="ai-provider">AI Provider</label>
-          <select id="ai-provider" class="provider-select">
-            <option value="anthropic">Anthropic (Claude)</option>
-            <option value="gemini">Google Gemini</option>
-            <option value="openai">OpenAI</option>
-            <option value="openrouter">OpenRouter</option>
-            <option value="groq">Groq</option>
-            <option value="together">Together AI</option>
-            <option value="ollama">Ollama (local)</option>
-            <option value="openai_compatible">OpenAI-compatible (custom)</option>
-          </select>
+      <!-- ═══════════════════════════════════════════
+           FRONT ROW: LinkedIn + AI settings | JD | Q&A
+           ═══════════════════════════════════════════ -->
+      <div class="top-grid">
+        <div class="top-col top-col-settings">
+          <!-- Quick-copy LinkedIn -->
+          <div class="linkedin-bar" id="linkedin-bar">
+            <span class="linkedin-icon">in</span>
+            <input type="text" class="linkedin-url-input" id="linkedin-url" value="" placeholder="Paste your LinkedIn profile URL" />
+            <button type="button" class="linkedin-copy-btn" id="linkedin-copy-btn">Copy</button>
+          </div>
+
+          <!-- AI settings (compact) -->
+          <div class="api-compact">
+            <div class="api-key-group">
+              <label for="ai-provider">AI Provider</label>
+              <select id="ai-provider" class="provider-select">
+                <option value="anthropic">Anthropic (Claude)</option>
+                <option value="gemini">Google Gemini</option>
+                <option value="openai">OpenAI</option>
+                <option value="openrouter">OpenRouter</option>
+                <option value="groq">Groq</option>
+                <option value="together">Together AI</option>
+                <option value="ollama">Ollama (local)</option>
+                <option value="openai_compatible">OpenAI-compatible (custom)</option>
+              </select>
+            </div>
+            <div class="api-key-group">
+              <label for="ai-model-select">Model</label>
+              <select id="ai-model-select" class="provider-select"></select>
+              <input type="text" id="ai-model" name="rt_ai_model" placeholder="custom model name" autocomplete="off" style="display: none;" />
+            </div>
+            <div class="api-key-group" id="provider-key-group">
+              <label for="provider-key" id="provider-key-label">API Key</label>
+              <input type="password" id="provider-key" name="rt_provider_key" placeholder="" autocomplete="new-password" />
+            </div>
+            <div class="api-key-group" id="base-url-group" style="display: none;">
+              <label for="base-url">Base URL</label>
+              <input type="text" id="base-url" placeholder="http://localhost:1234/v1" autocomplete="off" />
+            </div>
+            <div class="model-cost-hint" id="model-cost-hint"></div>
+          </div>
         </div>
-        <div class="api-key-group">
-          <label for="ai-model">Model</label>
-          <input type="text" id="ai-model" name="rt_ai_model" list="ai-model-list" placeholder="e.g. gpt-4o" autocomplete="off" />
-          <datalist id="ai-model-list"></datalist>
+
+        <!-- Job Description (changes each time) -->
+        <div class="top-col input-card jd-card">
+          <h3>Job Description <span class="jd-badge">Changes each application</span></h3>
+          <textarea id="jd-text" rows="7" placeholder="Paste the full job description here."></textarea>
+          <button type="submit" class="btn btn-primary btn-block">Tailor My Resume</button>
         </div>
-        <div class="api-key-group" id="provider-key-group">
-          <label for="provider-key" id="provider-key-label">API Key</label>
-          <input type="password" id="provider-key" name="rt_provider_key" placeholder="" autocomplete="new-password" />
-        </div>
-        <div class="api-key-group" id="base-url-group" style="display: none;">
-          <label for="base-url">Base URL</label>
-          <input type="text" id="base-url" placeholder="http://localhost:1234/v1" autocomplete="off" />
+
+        <!-- Application Q&A -->
+        <div class="top-col input-card qa-panel" id="qa-panel">
+          <h3>Application Q&amp;A</h3>
+          <textarea id="qa-questions" rows="4" placeholder="Paste application questions, one per line"></textarea>
+          <button type="button" class="btn btn-primary btn-block" id="qa-submit-btn">Generate Answers</button>
+          <div class="qa-loading" id="qa-loading" style="display: none;">
+            <div class="spinner" style="width: 20px; height: 20px;"></div>
+            <span>Crafting your answers...</span>
+          </div>
+          <div class="qa-results" id="qa-results"></div>
+          <div class="qa-hint" id="qa-hint" style="display: none;">Click any answer to copy the full text.</div>
         </div>
       </div>
 
@@ -136,20 +164,7 @@
         </div>
       </div>
 
-      <!-- ═══════════════════════════════════════════
-           MAIN INPUT: Job Description (changes each time)
-           ═══════════════════════════════════════════ -->
-      <div class="jd-section">
-        <div class="input-card jd-card">
-          <h3><span class="icon">3</span> Job Description <span class="jd-badge">Changes each application</span></h3>
-          <textarea id="jd-text" rows="10" placeholder="Paste the full job description here.&#10;&#10;This is the only thing you need to change for each new application."></textarea>
-        </div>
-      </div>
 
-      <!-- Submit -->
-      <div class="action-row">
-        <button type="submit" class="btn btn-primary">Tailor My Resume</button>
-      </div>
     </form>
 
     <!-- ═══════════════════════════════════════════
@@ -213,39 +228,15 @@
         </div>
       </div>
 
-      <div class="results-tabs">
-        <button class="tab-btn active" data-tab="tab-preview">Resume Preview</button>
-        <button class="tab-btn" data-tab="tab-qa">Application Q&A</button>
-      </div>
-
       <!-- Tab: Resume Preview -->
       <div class="tab-content active" id="tab-preview">
+        <div class="ats-badge" id="ats-badge" style="display:none;"></div>
         <div class="tailor-warning" id="tailor-warning" style="display:none;"></div>
         <div class="preview-legend"><mark class="tailor-change">Yellow highlight</mark> = text tailored to this job. It shows only here — the downloaded PDF is clean.</div>
         <div class="resume-preview" id="resume-preview"></div>
       </div>
-
-      <!-- Tab: Application Q&A -->
-      <div class="tab-content" id="tab-qa">
-        <div class="qa-section">
-          <div class="qa-intro">
-            <h3>Application Questions</h3>
-            <p>Paste the questions from the job application below (one per line). Answers will be generated using your resume and the job description as context.</p>
-          </div>
-          <textarea id="qa-questions" rows="6" placeholder="Why are you interested in this role?
-What experience do you have with React?
-Describe a challenging project you worked on..."></textarea>
-          <div class="qa-action-row">
-            <button type="button" class="btn btn-primary" id="qa-submit-btn">Generate Answers</button>
-          </div>
-          <div class="qa-loading" id="qa-loading" style="display: none;">
-            <div class="spinner" style="width: 32px; height: 32px;"></div>
-            <span>Crafting your answers...</span>
-          </div>
-          <div id="qa-results"></div>
-        </div>
-      </div>
     </div>
+
     <!-- ═══════════════════════════════════════════
          MY SAVED RESUMES (per-user, server-side)
          ═══════════════════════════════════════════ -->
