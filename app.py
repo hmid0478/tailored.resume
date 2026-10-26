@@ -2411,37 +2411,129 @@ _FILLER_RE = re.compile(
 _FIRST_PERSON_RE = re.compile(r"\b(I|I'm|I am|my|me)\b")
 
 
+_JUNIOR_TITLE_RE = re.compile(r"\b(intern|internship|junior|jr\.?|trainee|apprentice|co-?op)\b", re.I)
+_SENIOR_CLAIM_RE = re.compile(
+    r"\b(mentor\w*|coach\w*|onboard\w* new engineers|hiring process|constructive feedback|"
+    r"junior team members|technical leadership)\b", re.I)
+
+
+def _verbatim_prefix_words(bullet_words: list[str], orig: str) -> int:
+    """Length (in words) of the longest prefix of the bullet that appears verbatim in the
+    original text. Prefix containment is monotonic, so binary search is exact."""
+    lo, hi = 0, len(bullet_words)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if " ".join(bullet_words[:mid]) in orig:
+            lo = mid
+        else:
+            hi = mid - 1
+    return lo
+
+
 def _bullet_quality_issues(resume_json: dict, original_text: str) -> list[str]:
-    """Bullets that are the original sentence plus a bolted-on extra sentence, bullets using
-    resume filler ("Experience with ..."), and a first-person Summary. Each issue is a short
-    human-readable line the retry prompt can quote back to the model."""
-    orig = re.sub(r"\s+", " ", original_text or "").lower()
+    """Problems the model tends to produce when it pads instead of tailoring:
+    bullets that are the original sentence plus tacked-on words (however they are attached),
+    resume filler ("Experience with ..."), leadership claims in intern/junior roles, and a
+    Summary that is first-person or names the hiring company. Each issue is a short line the
+    retry prompt quotes back to the model."""
+    orig = re.sub(r"[^a-z0-9+#/ ]", " ", (original_text or "").lower())
+    orig = re.sub(r"\s+", " ", orig)
+    company = (resume_json.get("detected_company") or "").strip()
     issues = []
     for s in (resume_json.get("sections") or []):
         if not isinstance(s, dict):
             continue
         if s.get("type") == "text":
             content = str(s.get("content", "")).replace("[[", "").replace("]]", "")
+            heading = s.get("heading", "Summary")
             if _FIRST_PERSON_RE.search(content):
-                issues.append(f'{s.get("heading", "Summary")} is written in the first person ("I", "my") — use resume style with no pronouns.')
+                issues.append(f'{heading} is written in the first person ("I", "my") — use resume style with no pronouns.')
+            if (company and len(company) > 2 and company.lower() in content.lower()) or re.search(r"\bseeking\b", content, re.I):
+                issues.append(f'{heading} names the hiring company or is an objective ("Seeking...") — describe the candidate only.')
             continue
         if s.get("type") not in ("experience", "projects"):
             continue
         for it in (s.get("items") or []):
             if not isinstance(it, dict):
                 continue
+            junior = bool(_JUNIOR_TITLE_RE.search(str(it.get("job_title", ""))))
             for b in (it.get("bullets") or []):
                 if not isinstance(b, str):
                     continue
                 clean = re.sub(r"\s+", " ", b.replace("[[", "").replace("]]", "")).strip()
-                sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z])", clean)
-                head = sentences[0].rstrip(".").lower()
-                tail = " ".join(sentences[1:]).lower()
-                if len(sentences) > 1 and len(head) >= 30 and head in orig and tail.rstrip(".") not in orig:
-                    issues.append(f'Original bullet with a sentence bolted on — rewrite it as ONE new sentence: "{clean}"')
+                words = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9+#/ ]", " ", clean.lower())).split()
+                prefix = _verbatim_prefix_words(words, orig)
+                if 12 <= prefix < len(words) and prefix >= len(words) * 0.6:
+                    issues.append(f'Original bullet with words tacked on the end — rewrite the WHOLE bullet as one new sentence: "{clean}"')
                 elif _FILLER_RE.search(clean):
                     issues.append(f'Filler phrase ("Experience with...", "Proficient in...") — show the work instead: "{clean}"')
+                if junior and _SENIOR_CLAIM_RE.search(clean):
+                    issues.append(f'Leadership/mentoring/hiring claim in a junior or intern role — remove it: "{clean}"')
     return issues
+
+
+# JD "skills" that are really responsibilities or soft skills; dropped from the Skills section.
+_NON_SKILL_ITEMS = {
+    "hiring process", "hiring", "onboarding", "onboarding new engineers", "coaching",
+    "constructive feedback", "user needs", "knowledge sharing", "performance bottlenecks",
+    "experiments", "experimentation", "prototypes", "continuous improvement",
+    "strong communication", "communication skills", "collaboration skills", "problem solving",
+}
+
+# Named technologies to look for in the JD. Each entry: canonical name -> extra spellings.
+_KNOWN_TECH = {
+    "HTML": ["html5"], "CSS": ["css3"], "JavaScript": [], "TypeScript": [], "React": ["react.js", "reactjs"],
+    "React Native": [], "Next.js": ["nextjs", "next js"], "Vue.js": ["vue", "vuejs"], "Angular": [],
+    "Svelte": [], "Redux": [], "Tailwind CSS": ["tailwind"], "Node.js": ["nodejs", "node js"],
+    "Express.js": ["expressjs"], "NestJS": [], "Python": [], "Django": [], "Flask": [],
+    "FastAPI": [], "Java": [], "Spring Boot": [], "Kotlin": [], "Golang": [], "Ruby": [],
+    "Ruby on Rails": [], "PHP": [], "Laravel": [], "C#": [], ".NET": ["dotnet"], "C++": [],
+    "Scala": [], "GraphQL": [], "gRPC": [], "RESTful APIs": ["rest api", "rest apis"], "Kafka": [], "RabbitMQ": [],
+    "Redis": [], "PostgreSQL": ["postgres"], "MySQL": [], "MongoDB": [], "DynamoDB": [],
+    "Elasticsearch": [], "Cassandra": [], "Snowflake": [], "AWS": ["amazon web services"],
+    "GCP": ["google cloud"], "Azure": [], "Kubernetes": ["k8s"], "Docker": [], "Terraform": [],
+    "Helm": [], "Jenkins": [], "GitHub Actions": [], "GitLab CI": [], "CircleCI": [], "Datadog": [],
+    "Prometheus": [], "Grafana": [], "Splunk": [], "New Relic": [], "Sentry": [], "OpenTelemetry": [],
+    "Jest": [], "Cypress": [], "Playwright": [], "Selenium": [], "Pytest": [], "JUnit": [],
+    "Linux": [], "Git": [], "Apache Spark": ["pyspark"], "Airflow": [], "dbt": [], "PyTorch": [],
+    "TensorFlow": [], "Microservices": ["microservice"], "CI/CD": [], "Agile": [],
+}
+
+
+def _skills_cleanup(resume_json: dict, jd_text: str) -> None:
+    """Deterministic Skills fixes the model is unreliable at: drop responsibility/soft-skill
+    items, then add any named JD technology still missing from the Skills section (Section
+    6.G asks for every one). Runs before _dedupe_skills."""
+    skill_sections = [s for s in (resume_json.get("sections") or [])
+                      if isinstance(s, dict) and s.get("type") == "skills" and isinstance(s.get("items"), list)]
+    if not skill_sections:
+        return
+    have = ""
+    for s in skill_sections:
+        for it in s["items"]:
+            if not isinstance(it, dict) or not isinstance(it.get("items"), str):
+                continue
+            parts = [p.strip() for p in re.split(r",\s*(?![^()]*\))", it["items"])]
+            parts = [p for p in parts if p and p.replace("[[", "").replace("]]", "").strip().lower() not in _NON_SKILL_ITEMS]
+            it["items"] = ", ".join(parts)
+            have += " " + it["items"].replace("[[", "").replace("]]", "").lower()
+    jd = (jd_text or "").lower()
+    def mentions(text, name):
+        return re.search(r"(?<![a-z0-9])" + re.escape(name.lower()) + r"(?![a-z0-9+#])", text) is not None
+    missing = []
+    for name, aliases in _KNOWN_TECH.items():
+        spellings = [name] + aliases
+        if any(mentions(jd, n) for n in spellings) and not any(mentions(have, n) for n in spellings):
+            missing.append(name)
+    if not missing:
+        return
+    items = skill_sections[0]["items"]
+    target = next((it for it in items if isinstance(it, dict) and re.search(r"language|framework|frontend", str(it.get("category", "")), re.I)), None)
+    if target is None:
+        target = next((it for it in items if isinstance(it, dict) and isinstance(it.get("items"), str)), None)
+    if target is None:
+        return
+    target["items"] = (target["items"].rstrip(", ") + ", " + ", ".join(f"[[{m}]]" for m in missing)).lstrip(", ")
 
 
 def _dedupe_skills(resume_json: dict) -> None:
@@ -2725,6 +2817,7 @@ def tailor_resume(
             print(f"[ats-guard] retry failed ({e}); keeping previous response.")
         _ats_fill_skills(data, _ats_missing(data, keywords), jd_text)
 
+    _skills_cleanup(data, jd_text)
     _dedupe_skills(data)
     return data
 
