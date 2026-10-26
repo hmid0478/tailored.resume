@@ -93,7 +93,7 @@
 
         <!-- Application Q&A -->
         <div class="top-col input-card qa-panel" id="qa-panel">
-          <h3>Application Q&amp;A</h3>
+          <h3>Application Q&amp;A <span class="label-hint">from your uploaded resume</span></h3>
           <textarea id="qa-questions" rows="4" placeholder="Paste application questions, one per line"></textarea>
           <button type="button" class="btn btn-primary btn-block" id="qa-submit-btn">Generate Answers</button>
           <div class="qa-loading" id="qa-loading" style="display: none;">
@@ -238,6 +238,23 @@
         <div class="preview-legend"><mark class="tailor-change">Yellow highlight</mark> = text tailored to this job. It shows only here — the downloaded PDF is clean.</div>
         <div class="resume-preview" id="resume-preview"></div>
       </div>
+     </div>
+    </div>
+
+    <!-- Q&A popup for one saved resume (My Resumes → Q&A) -->
+    <div class="results-section qa-modal" id="qa-modal" role="dialog" aria-modal="true" aria-labelledby="qa-modal-title">
+     <div class="results-dialog qa-dialog">
+      <button type="button" class="results-close-btn" id="qa-modal-close-btn" title="Close" aria-label="Close">&#x2715;</button>
+      <h2 id="qa-modal-title">Application Q&amp;A</h2>
+      <div class="qa-modal-sub" id="qa-modal-sub"></div>
+      <textarea id="qa-modal-questions" rows="4" placeholder="Paste application questions, one per line"></textarea>
+      <button type="button" class="btn btn-primary btn-block" id="qa-modal-submit-btn">Generate Answers</button>
+      <div class="qa-loading" id="qa-modal-loading" style="display: none;">
+        <div class="spinner" style="width: 20px; height: 20px;"></div>
+        <span>Crafting your answers...</span>
+      </div>
+      <div class="qa-results" id="qa-modal-results"></div>
+      <div class="qa-hint" id="qa-modal-hint" style="display: none;">Click any answer to copy the full text.</div>
      </div>
     </div>
 

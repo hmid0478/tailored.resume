@@ -493,24 +493,31 @@ function showNotice(msg) {
   }, 5000);
 }
 
-// ── Resume preview popup ──
-function openResultsModal() {
-  resultsSection.classList.add("active");
+// ── Popups (resume preview, per-resume Q&A) ──
+const qaModal = document.getElementById("qa-modal");
+
+function openModal(el) {
+  el.classList.add("active");
   document.body.classList.add("modal-open");
-  resultsSection.scrollTop = 0;
+  el.scrollTop = 0;
 }
 
-function closeResultsModal() {
-  resultsSection.classList.remove("active");
-  document.body.classList.remove("modal-open");
+function closeModal(el) {
+  el.classList.remove("active");
+  if (!document.querySelector(".results-section.active")) document.body.classList.remove("modal-open");
 }
 
-document.getElementById("results-close-btn").addEventListener("click", closeResultsModal);
-resultsSection.addEventListener("click", (e) => {
-  if (e.target === resultsSection) closeResultsModal();   // click on the dim backdrop
+function openResultsModal() { openModal(resultsSection); }
+function closeResultsModal() { closeModal(resultsSection); }
+
+[[resultsSection, "results-close-btn"], [qaModal, "qa-modal-close-btn"]].forEach(([el, closeId]) => {
+  document.getElementById(closeId).addEventListener("click", () => closeModal(el));
+  el.addEventListener("click", (e) => {
+    if (e.target === el) closeModal(el);   // click on the dim backdrop
+  });
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && resultsSection.classList.contains("active")) closeResultsModal();
+  if (e.key === "Escape") document.querySelectorAll(".results-section.active").forEach(closeModal);
 });
 
 // ── Restore file from localStorage into a file input ──
@@ -958,65 +965,84 @@ downloadBtn.addEventListener("click", async () => {
 });
 
 // ── Application Q&A ──
-const qaSubmitBtn = document.getElementById("qa-submit-btn");
-const qaLoading = document.getElementById("qa-loading");
-const qaResults = document.getElementById("qa-results");
+// Front-page panel: answers come from the user's uploaded (base) resume.
+// My Resumes → Q&A: a popup that answers from that one saved, tailored resume.
+let qaModalResume = null;   // { data, jd } of the resume the Q&A popup is for
 
-qaSubmitBtn.addEventListener("click", async () => {
-  const questions = document.getElementById("qa-questions").value.trim();
+async function runQA({ questionsEl, btn, loadingEl, resultsEl, hintEl, buildRequest }) {
+  const questions = questionsEl.value.trim();
   const provider = getActiveProvider();
   const apiKey = getActiveApiKey();
-  const model = getActiveModel();
   const baseUrl = getActiveBaseUrl();
   const meta = getProviderMeta(provider);
   const isLocal = provider === "ollama" || (provider === "openai_compatible" && baseUrl.includes("localhost"));
 
   if (!questions) return showError("Please paste at least one question.");
   if (!apiKey && !isLocal) return showError(`Please enter your ${meta.label} above.`);
-  if (!tailoredData) return showError("Please tailor a resume first — answers are based on it.");
-  const qaJD = savedJDText || document.getElementById("jd-text").value.trim();
-  if (!qaJD) return showError("Please paste the job description first.");
+  const settings = { provider, api_key: apiKey, model: getActiveModel(), base_url: baseUrl, questions };
+  let req;
+  try {
+    req = buildRequest(settings);
+  } catch (err) {
+    return showError(err.message);
+  }
 
-  qaSubmitBtn.disabled = true;
-  qaSubmitBtn.textContent = "Generating...";
-  qaLoading.style.display = "flex";
-  qaResults.innerHTML = "";
+  btn.disabled = true;
+  btn.textContent = "Generating...";
+  loadingEl.style.display = "flex";
+  resultsEl.innerHTML = "";
+  hintEl.style.display = "none";
 
   try {
-    const res = await authFetch("/api/answer-questions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        provider: provider,
-        api_key: apiKey,
-        model: model,
-        base_url: baseUrl,
-        questions: questions,
-        jd: qaJD,
-        resume: tailoredData,
-      }),
-    });
-
+    const res = await authFetch("/api/answer-questions", Object.assign({ method: "POST" }, req));
     const json = await res.json();
-
-    if (!res.ok || json.error) {
-      throw new Error(json.error || "Unknown error");
-    }
-
-    renderQAResults(json.answers);
+    if (!res.ok || json.error) throw new Error(json.error || "Unknown error");
+    renderQAResults(json.answers, resultsEl, hintEl);
   } catch (err) {
     showError(err.message);
   } finally {
-    qaSubmitBtn.disabled = false;
-    qaSubmitBtn.textContent = "Generate Answers";
-    qaLoading.style.display = "none";
+    btn.disabled = false;
+    btn.textContent = "Generate Answers";
+    loadingEl.style.display = "none";
   }
-});
+}
 
-// Answers show as short previews on the front page; clicking anywhere on one copies
-// the FULL answer, so the panel stays small.
-function renderQAResults(answers) {
-  qaResults.innerHTML = "";
+const qaSubmitBtn = document.getElementById("qa-submit-btn");
+qaSubmitBtn.addEventListener("click", () => runQA({
+  questionsEl: document.getElementById("qa-questions"),
+  btn: qaSubmitBtn,
+  loadingEl: document.getElementById("qa-loading"),
+  resultsEl: document.getElementById("qa-results"),
+  hintEl: document.getElementById("qa-hint"),
+  buildRequest: (settings) => {
+    if (!resumeFileInput.files.length) throw new Error("Please upload your resume in 'Your Profile' first.");
+    const fd = new FormData();
+    Object.entries(settings).forEach(([k, v]) => fd.append(k, v || ""));
+    fd.append("jd", document.getElementById("jd-text").value.trim());
+    fd.append("resume_file", resumeFileInput.files[0]);
+    return { body: fd };
+  },
+}));
+
+const qaModalSubmitBtn = document.getElementById("qa-modal-submit-btn");
+qaModalSubmitBtn.addEventListener("click", () => runQA({
+  questionsEl: document.getElementById("qa-modal-questions"),
+  btn: qaModalSubmitBtn,
+  loadingEl: document.getElementById("qa-modal-loading"),
+  resultsEl: document.getElementById("qa-modal-results"),
+  hintEl: document.getElementById("qa-modal-hint"),
+  buildRequest: (settings) => {
+    if (!qaModalResume) throw new Error("No resume selected.");
+    return {
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.assign({}, settings, { jd: qaModalResume.jd, resume: qaModalResume.data })),
+    };
+  },
+}));
+
+// Answers show as short previews; clicking anywhere on one copies the FULL answer.
+function renderQAResults(answers, resultsEl, hintEl) {
+  resultsEl.innerHTML = "";
   (answers || []).forEach((item, i) => {
     const card = document.createElement("div");
     card.className = "qa-card";
@@ -1027,9 +1053,9 @@ function renderQAResults(answers) {
       <span class="qa-copied">Copied!</span>
     `;
     card.addEventListener("click", () => copyQAAnswer(card, item.answer || ""));
-    qaResults.appendChild(card);
+    resultsEl.appendChild(card);
   });
-  document.getElementById("qa-hint").style.display = (answers || []).length ? "" : "none";
+  hintEl.style.display = (answers || []).length ? "" : "none";
 }
 
 async function copyQAAnswer(card, text) {
@@ -1389,12 +1415,24 @@ async function downloadSavedResume(id, btn) {
   }
 }
 
-// Open a saved resume AND jump to the Application Q&A panel for it.
+// Open the Q&A popup for one saved resume (answers use that resume + its JD).
 async function openSavedResumeQA(id) {
-  await openSavedResume(id, false);   // loads data + its stored JD as Q&A context, no popup
-  const qa = document.getElementById("qa-panel");
-  if (qa) qa.scrollIntoView({ behavior: "smooth", block: "start" });
-  document.getElementById("qa-questions").focus({ preventScroll: true });
+  try {
+    const res = await authFetch("/api/resumes/" + encodeURIComponent(id));
+    const json = await res.json();
+    if (!res.ok || json.error) throw new Error(json.error || "Could not load resume.");
+    const rec = json.resume || {};
+    if (!rec.data) throw new Error("This saved resume has no data.");
+    qaModalResume = { data: rec.data, jd: rec.jd || "" };
+    document.getElementById("qa-modal-sub").textContent =
+      [rec.company, rec.title].filter(Boolean).join(" · ") || rec.name || "Saved resume";
+    document.getElementById("qa-modal-results").innerHTML = "";
+    document.getElementById("qa-modal-hint").style.display = "none";
+    openModal(qaModal);
+    document.getElementById("qa-modal-questions").focus();
+  } catch (err) {
+    showError(err.message);
+  }
 }
 
 function formatSavedDate(iso) {
@@ -1455,15 +1493,27 @@ function saveBatchJobs() {
   saveToStorage(STORAGE_KEYS.batchJobs, collectBatchJobs());
 }
 
+// Folded cards show just a one-line label; click it to unfold.
+function batchJobLabel(card) {
+  const company = card.querySelector(".batch-company").value.trim();
+  const title = card.querySelector(".batch-title").value.trim();
+  const jd = card.querySelector(".batch-jd").value.trim();
+  return [company, title].filter(Boolean).join(" · ") || (jd ? jd.split("\n")[0].slice(0, 80) : "New job");
+}
+
 function addBatchJob(job) {
   job = job || { company: "", title: "", jd: "", url: "" };
   const card = document.createElement("div");
   card.className = "batch-job";
   card.innerHTML =
+    '<div class="batch-job-summary">' +
+    '  <span class="batch-job-chevron">&#9660;</span>' +
+    '  <span class="batch-job-label"></span>' +
+    '  <button type="button" class="batch-remove" title="Remove job">&#x2715;</button>' +
+    '</div>' +
     '<div class="batch-job-row">' +
     '  <input class="batch-company" placeholder="Company (optional)" autocomplete="off" />' +
     '  <input class="batch-title" placeholder="Job title (optional)" autocomplete="off" />' +
-    '  <button type="button" class="batch-remove" title="Remove job">&#x2715;</button>' +
     '</div>' +
     '<textarea class="batch-jd" rows="4" placeholder="Paste the job description for this job..."></textarea>' +
     '<input type="url" class="batch-url" placeholder="Job link (optional) — adds an Apply button" autocomplete="off" />' +
@@ -1472,7 +1522,16 @@ function addBatchJob(job) {
   card.querySelector(".batch-title").value = job.title || "";
   card.querySelector(".batch-jd").value = job.jd || "";
   card.querySelector(".batch-url").value = job.url || "";
-  card.querySelectorAll("input, textarea").forEach((el) => el.addEventListener("input", saveBatchJobs));
+  const labelEl = card.querySelector(".batch-job-label");
+  labelEl.textContent = batchJobLabel(card);
+  card.querySelectorAll("input, textarea").forEach((el) => el.addEventListener("input", () => {
+    labelEl.textContent = batchJobLabel(card);
+    saveBatchJobs();
+  }));
+  card.querySelector(".batch-job-summary").addEventListener("click", (e) => {
+    if (e.target.closest(".batch-remove")) return;
+    card.classList.toggle("collapsed");
+  });
   card.querySelector(".batch-remove").addEventListener("click", () => {
     card.remove();
     if (!batchList.querySelector(".batch-job")) addBatchJob();  // keep at least one card
@@ -1534,9 +1593,8 @@ async function generateAllResumes() {
       const saveJson = await saveRes.json();
       if (!saveRes.ok || saveJson.error) throw new Error(saveJson.error || "Could not save resume.");
       done++;
-      const label = [finalCompany, finalTitle].filter(Boolean).join(" · ");
-      statusEl.textContent = "✓ Saved" + (label ? " — " + label : "");
-      statusEl.className = "batch-job-status done";
+      card.remove();   // saved to My Resumes — only failed jobs stay here for a retry
+      saveBatchJobs();
     } catch (err) {
       failed++;
       statusEl.textContent = "✗ " + err.message;
@@ -1547,11 +1605,20 @@ async function generateAllResumes() {
 
   batchGenerateBtn.disabled = false;
   batchGenerateBtn.textContent = "Generate all resumes";
+  if (!batchList.querySelector(".batch-job")) addBatchJob();
+  saveBatchJobs();
+  batchProgress.textContent = `${done} saved to My Resumes` +
+    (failed ? ` · ${failed} failed — fix and click Generate again` : "");
   loadMyResumes();  // new resumes now appear in My Resumes, ready to download
 }
 
 if (batchList) {
-  document.getElementById("batch-add-btn").addEventListener("click", () => { addBatchJob(); saveBatchJobs(); });
+  document.getElementById("batch-add-btn").addEventListener("click", () => {
+    batchList.querySelectorAll(".batch-job").forEach((c) => c.classList.add("collapsed"));
+    const card = addBatchJob();
+    saveBatchJobs();
+    card.querySelector(".batch-jd").focus();
+  });
   batchGenerateBtn.addEventListener("click", generateAllResumes);
   document.getElementById("batch-header").addEventListener("click", (e) => {
     if (e.target.closest("input, textarea, .batch-remove")) return;
@@ -1562,8 +1629,12 @@ if (batchList) {
 function initBatch() {
   if (!batchList) return;
   const saved = loadJSONFromStorage(STORAGE_KEYS.batchJobs);
-  if (Array.isArray(saved) && saved.length) saved.forEach((j) => addBatchJob(j));
-  else addBatchJob();
+  if (Array.isArray(saved) && saved.length) {
+    saved.forEach((j) => addBatchJob(j).classList.add("collapsed"));
+    batchList.lastElementChild.classList.remove("collapsed");
+  } else {
+    addBatchJob();
+  }
 }
 
 // ── Restore saved state ──

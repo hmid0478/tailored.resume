@@ -3338,9 +3338,12 @@ def api_tailor():
 @app.route("/api/answer-questions", methods=["POST"])
 @require_user
 def api_answer_questions():
-    """Answer job application questions using JD + resume context."""
+    """Answer job application questions using JD + resume context.
+
+    Two callers: a saved/tailored resume sends JSON with `resume` (structured data);
+    the front-page panel sends multipart with `resume_file` (the user's base resume)."""
     try:
-        data = request.get_json()
+        data = request.get_json(silent=True) or request.form.to_dict()
         if not data:
             return jsonify({"error": "No data provided."}), 400
 
@@ -3351,16 +3354,25 @@ def api_answer_questions():
         model = (data.get("model", "") or "").strip() or None
         base_url = (data.get("base_url", "") or "").strip() or None
         questions = data.get("questions", "").strip()
-        jd_text = data.get("jd", "").strip()
-        resume_json = data.get("resume", {})
+        jd_text = (data.get("jd", "") or "").strip()
+        resume_json = data.get("resume") if isinstance(data.get("resume"), dict) else {}
+        file_resume_text = ""
+        if "resume_file" in request.files and request.files["resume_file"].filename:
+            f = request.files["resume_file"]
+            ext = os.path.splitext(f.filename)[1].lower()
+            if ext not in PARSERS:
+                return jsonify({"error": f"Unsupported file type: {ext}. Use .docx, .pdf, or .txt"}), 400
+            file_resume_text = PARSERS[ext](f.read())
 
         is_local = provider == "ollama" or (provider == "openai_compatible" and base_url and "localhost" in base_url)
         if not api_key and not is_local:
             return jsonify({"error": "API key is required."}), 400
         if not questions:
             return jsonify({"error": "Please paste at least one question."}), 400
+        if not resume_json and not file_resume_text:
+            return jsonify({"error": "Resume context is missing. Upload your resume first."}), 400
         if not jd_text:
-            return jsonify({"error": "Job description context is missing."}), 400
+            jd_text = "(No job description provided — answer from the resume alone.)"
 
         # Rebuild a readable resume summary from the structured data
         resume_lines = []
@@ -3415,6 +3427,8 @@ def api_answer_questions():
             if edu:
                 resume_lines.append(f"\nEducation: {edu.get('degree', '')} — {edu.get('school', '')}")
         resume_text = "\n".join(resume_lines).replace("[[", "").replace("]]", "")
+        if file_resume_text:
+            resume_text = file_resume_text
 
         system_prompt = """You are an expert job application assistant. You help candidates write compelling,
 authentic answers to job application questions. You have deep context about:

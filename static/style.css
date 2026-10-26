@@ -2111,3 +2111,75 @@ body.modal-open {
     padding: 16px;
   }
 }
+
+/* ── Foldable batch jobs ── */
+
+.batch-job-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.batch-job-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.88rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.batch-job-chevron {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  transition: transform 0.2s;
+}
+
+.batch-job.collapsed .batch-job-chevron {
+  transform: rotate(-90deg);
+}
+
+.batch-job.collapsed .batch-job-summary {
+  margin-bottom: 0;
+}
+
+.batch-job.collapsed .batch-job-row,
+.batch-job.collapsed .batch-jd,
+.batch-job.collapsed .batch-url {
+  display: none;
+}
+
+.batch-job.collapsed .batch-job-status:empty {
+  display: none;
+}
+
+/* ── Per-resume Q&A popup ── */
+
+.qa-dialog {
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.qa-dialog h2 {
+  padding-right: 44px;
+}
+
+.qa-modal-sub {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  margin-top: -6px;
+}
+
+.qa-dialog textarea {
+  min-height: 0;
+}
+
+.qa-dialog .qa-results {
+  max-height: 55vh;
+}
