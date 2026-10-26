@@ -842,6 +842,9 @@ Returning the original skills section unchanged, or with only cosmetic edits, is
 5. **Rename category labels** to match the JD's focus when helpful (for example, "Backend & Distributed Systems" becomes "Backend, APIs & Microservices" for an API-heavy backend role). Add a new category when the JD has a clear focus area the existing categories do not cover, and the candidate has supporting skills for it.
 6. **Trim clutter.** Move skills that are irrelevant to this JD to the end of their category, or remove them when they distract, but keep any skill that an experience or project entry depends on.
 
+7. **Write skills as keywords, never as JD sentences.** Every item must be a concise skill name of 1–4 words, the way it would appear on a real resume. Convert JD phrases into keywords: "3+ years of back end distributed system design, development, and delivery" becomes "Distributed Systems"; "delivery and hosting of front ends and microservices on Kubernetes and AWS" becomes "Kubernetes", "AWS", "Microservices"; "continuous integration and continuous deployment (CI/CD) processes, including integrated unit tests and end to end integration tests" becomes "CI/CD", "Unit Testing", "End-to-End Testing". Never use the words "experience", "proficiency", "familiarity", or "years" in a skill item. Do not create an "Other" or catch-all category of leftover JD phrases; put each skill in a real category (for example, "Healthcare Technology" under a "Domain" category, "Developer Tooling" under Engineering).
+8. **Check for completeness before finishing.** List every named technology in the JD to yourself (for example HTML, CSS, React, React Native, Next.js, Kubernetes, AWS, PostgreSQL) and confirm each one appears in the skills section. Do not drop the preferred ones.
+
 Keep the same output structure (category + comma-separated items). The section may grow as much as needed to include every JD skill. Mark every added, renamed, or reworded skill with [[ ]].
 
 ### H. Back up every skill in the summary and experience (mandatory)
@@ -855,7 +858,12 @@ A skill that appears only in the skills list looks unsupported to recruiters and
    - Never place a technology in a role dated before that technology was publicly available.
    - Spread the skills across bullets and roles; do not pack more than three new skills into one bullet.
    - Keep the bullet's scope consistent with the role's seniority.
-4. **Still protected:** do not invent metrics, numbers, team sizes, employers, job titles, dates, degrees, or certifications. Sections 2 and 12 still apply to those.
+4. **Rewrite, do not append.** Work each skill into the bullet's main action and implementation ("Deployed Node.js microservices on Kubernetes and AWS with CI/CD pipelines running unit and end-to-end tests"). Do NOT tack JD phrases onto the end of an existing bullet with a comma ("..., ensuring seamless integration and communication across systems", "..., staying updated with industry trends", "..., assisting with interviews and onboarding new engineers"). A bullet that is the original sentence plus a trailing JD clause is a FAILURE.
+5. **Do not copy JD sentences.** Paraphrase JD responsibilities into concrete engineering work; never paste a JD sentence or a long JD fragment into a bullet or the summary.
+6. **No repetition.** Use each JD responsibility or phrase (for example "logging, monitoring, and alerting", "code reviews", "mentoring") in at most one bullet per role and at most two bullets in the whole resume.
+7. **Match the role's level.** Leadership, mentoring, hiring, onboarding, architecture ownership, and technical-strategy claims go only in senior or lead roles. Intern and junior roles get hands-on implementation work only.
+8. **Summary:** describe the candidate, not the employer. Do not mention the hiring company, its industry, or its mission (no "for a health and wellness platform"), and do not end with a clause about the target job.
+9. **Still protected:** do not invent metrics, numbers, team sizes, employers, job titles, dates, degrees, or certifications. Sections 2 and 12 still apply to those.
 
 This rule overrides any "do not claim unsupported technologies" wording in Sections 5, 7, 9, 10, and 17 for JD skills only.
 
@@ -1631,13 +1639,18 @@ def _build_tailor_user_msg(resume_text: str, prompt_text: str, jd_text: str, det
    Use the exact characters [[ and ]], and always close every [[ with a matching ]].
 9. TAILOR THE SKILLS SECTION (mandatory — follow Section 6.G of the system prompt): ADD EVERY
    technology, tool, platform, and practice named in the JD to the Skills section (this overrides
-   rule 5's "never invent" for the Skills section only), use the JD's exact spelling, put the most JD-relevant category first, and put JD-matching
+   rule 5's "never invent" for the Skills section only), written as short 1-4 word keywords (never
+   JD sentences, never an "Other" catch-all), use the JD's exact spelling, put the most JD-relevant category first, and put JD-matching
    items first inside each category. Returning the Skills section unchanged is WRONG.
 10. BACK UP EVERY SKILL (mandatory — follow Section 6.H of the system prompt): name the JD's core
    skills in the Summary, and make every JD skill you added to Skills appear in at least one
    Experience bullet, worked into the candidate's real work (extend existing bullets first; add at
-   most two new bullets per role). This overrides rule 5's "never invent" for JD skills. Never put a
-   technology in a role dated before it existed, and never invent metrics, titles, dates, or employers."""
+   most two new bullets per role). This overrides rule 5's "never invent" for JD skills. Weave skills
+   into each bullet's main action — never append JD phrases to the end of a bullet with a comma, never
+   paste JD sentences, and never repeat a JD phrase in more than two bullets. Leadership, mentoring,
+   hiring, and onboarding claims go only in senior roles, never intern/junior roles. The Summary must
+   not mention the hiring company or its industry. Never put a technology in a role dated before it
+   existed, and never invent metrics, titles, dates, or employers."""
 
     user_msg = f"""Here are the two inputs:
 
@@ -3192,7 +3205,7 @@ def _render_section_experience(pdf, section):
             company_location_title = company
         else:
             company_location_title = title or ""
-        pdf.cell(0, 6, company_location_title, new_x="LMARGIN", new_y="NEXT")
+        pdf.multi_cell(0, 6, company_location_title, align="L", new_x="LMARGIN", new_y="NEXT")  # wrap long headers
 
         # Line 2: Dates (grey)
         if dates:
@@ -3417,7 +3430,7 @@ def generate_pdf(data: dict, template: str = "modern_green") -> bytes:
                     company_location_title = company
                 else:
                     company_location_title = title or ""
-                pdf.cell(0, 6, company_location_title, new_x="LMARGIN", new_y="NEXT")
+                pdf.multi_cell(0, 6, company_location_title, align="L", new_x="LMARGIN", new_y="NEXT")  # wrap long headers
 
                 # Line 2: Dates
                 if dates:
