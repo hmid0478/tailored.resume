@@ -835,7 +835,7 @@ If the application supports a separate skill-gap report, identify unsupported JD
 Returning the original skills section unchanged, or with only cosmetic edits, is a FAILURE. For every JD, perform ALL of the following:
 
 1. **Add ALL JD skills.** Go through every technology, language, framework, library, tool, platform, database, cloud service, concept, practice, and methodology named in the JD, required or preferred, and add EVERY one of them to the skills section, placed in the most fitting category. This applies even when the original resume has no evidence for the skill.
-   **This rule overrides every other skills restriction in this prompt** (Section 6.B Category 3, 6.D, 6.F, Section 17, and any "do not add unsupported skills" wording) for the SKILLS SECTION ONLY. In the summary, experience bullets, and projects, still do not claim hands-on work, achievements, or metrics the resume does not support.
+   **This rule overrides every other skills restriction in this prompt** (Section 6.B Category 3, 6.D, 6.F, Section 17, and any "do not add unsupported skills" wording) for the skills section, and Section 6.H extends it to the summary and experience.
 2. **Use the JD's exact spelling** for every skill (for example, "Node.js" not "Node", "PostgreSQL" not "Postgres", "CI/CD" not "pipelines") and replace the resume's synonyms with the JD's terms.
 3. **Reorder categories** so the category most central to the JD comes first.
 4. **Reorder items inside each category** so JD-matching skills come first, in roughly the order of their importance in the JD.
@@ -843,6 +843,23 @@ Returning the original skills section unchanged, or with only cosmetic edits, is
 6. **Trim clutter.** Move skills that are irrelevant to this JD to the end of their category, or remove them when they distract, but keep any skill that an experience or project entry depends on.
 
 Keep the same output structure (category + comma-separated items). The section may grow as much as needed to include every JD skill. Mark every added, renamed, or reworded skill with [[ ]].
+
+### H. Back up every skill in the summary and experience (mandatory)
+
+A skill that appears only in the skills list looks unsupported to recruiters and scores lower in ATS. Every skill added under 6.G must also be shown in use:
+
+1. **Professional summary:** name the JD's most important skills (the core required languages, frameworks, platforms, and practices) as part of the candidate's capabilities, in natural sentences.
+2. **Experience bullets:** every JD skill added to the skills section must appear in at least one experience bullet, worked into the candidate's real work at a real employer. Prefer extending an existing bullet (for example, "built backend services" becomes "built [[Node.js and Express]] backend services [[deployed on Kubernetes]]") over adding a new bullet. Add a new bullet to a role only when a skill cannot fit into any existing one, and keep each role to at most two extra bullets.
+3. **Keep it plausible:**
+   - Put each skill in the role where it fits best: the most recent and most technical roles for modern tools, and roles whose work naturally relates to it.
+   - Never place a technology in a role dated before that technology was publicly available.
+   - Spread the skills across bullets and roles; do not pack more than three new skills into one bullet.
+   - Keep the bullet's scope consistent with the role's seniority.
+4. **Still protected:** do not invent metrics, numbers, team sizes, employers, job titles, dates, degrees, or certifications. Sections 2 and 12 still apply to those.
+
+This rule overrides any "do not claim unsupported technologies" wording in Sections 5, 7, 9, 10, and 17 for JD skills only.
+
+Mark every added skill and wording in the summary and bullets with [[ ]].
 
 ---
 
@@ -1615,7 +1632,12 @@ def _build_tailor_user_msg(resume_text: str, prompt_text: str, jd_text: str, det
 9. TAILOR THE SKILLS SECTION (mandatory — follow Section 6.G of the system prompt): ADD EVERY
    technology, tool, platform, and practice named in the JD to the Skills section (this overrides
    rule 5's "never invent" for the Skills section only), use the JD's exact spelling, put the most JD-relevant category first, and put JD-matching
-   items first inside each category. Returning the Skills section unchanged is WRONG."""
+   items first inside each category. Returning the Skills section unchanged is WRONG.
+10. BACK UP EVERY SKILL (mandatory — follow Section 6.H of the system prompt): name the JD's core
+   skills in the Summary, and make every JD skill you added to Skills appear in at least one
+   Experience bullet, worked into the candidate's real work (extend existing bullets first; add at
+   most two new bullets per role). This overrides rule 5's "never invent" for JD skills. Never put a
+   technology in a role dated before it existed, and never invent metrics, titles, dates, or employers."""
 
     user_msg = f"""Here are the two inputs:
 
