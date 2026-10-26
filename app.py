@@ -834,7 +834,7 @@ If the application supports a separate skill-gap report, identify unsupported JD
 
 Returning the original skills section unchanged, or with only cosmetic edits, is a FAILURE. For every JD, perform ALL of the following:
 
-1. **Add ALL JD skills.** Go through every technology, language, framework, library, tool, platform, database, cloud service, concept, practice, and methodology named in the JD, required or preferred, and add EVERY one of them to the skills section, placed in the most fitting category. This applies even when the original resume has no evidence for the skill.
+1. **Add ALL JD skills.** Go through every technology, language, framework, library, tool, platform, database, cloud service, architecture style (for example Microservices, Distributed Systems), and named methodology (for example Agile, CI/CD, Observability) in the JD, required or preferred, and add EVERY one of them to the skills section, placed in the most fitting category. This applies even when the original resume has no evidence for the skill. Do NOT turn JD responsibilities, soft skills, or activities into skills (no "User Needs", "Prototypes", "Experiments", "Constructive Feedback", "Coaching", "Performance Bottlenecks", "Knowledge Sharing"); those belong in experience bullets. Never list the same skill twice anywhere in the skills section.
    **This rule overrides every other skills restriction in this prompt** (Section 6.B Category 3, 6.D, 6.F, Section 17, and any "do not add unsupported skills" wording) for the skills section, and Section 6.H extends it to the summary and experience.
 2. **Use the JD's exact spelling** for every skill (for example, "Node.js" not "Node", "PostgreSQL" not "Postgres", "CI/CD" not "pipelines") and replace the resume's synonyms with the JD's terms.
 3. **Reorder categories** so the category most central to the JD comes first.
@@ -858,11 +858,11 @@ A skill that appears only in the skills list looks unsupported to recruiters and
    - Never place a technology in a role dated before that technology was publicly available.
    - Spread the skills across bullets and roles; do not pack more than three new skills into one bullet.
    - Keep the bullet's scope consistent with the role's seniority.
-4. **Rewrite, do not append.** Work each skill into the bullet's main action and implementation ("Deployed Node.js microservices on Kubernetes and AWS with CI/CD pipelines running unit and end-to-end tests"). Do NOT tack JD phrases onto the end of an existing bullet with a comma ("..., ensuring seamless integration and communication across systems", "..., staying updated with industry trends", "..., assisting with interviews and onboarding new engineers"). A bullet that is the original sentence plus a trailing JD clause is a FAILURE.
+4. **Rewrite, do not append.** Work each skill into the bullet's main action and implementation ("Deployed Node.js microservices on Kubernetes and AWS with CI/CD pipelines running unit and end-to-end tests"). Do NOT tack JD phrases onto the end of an existing bullet with a comma ("..., ensuring seamless integration and communication across systems", "..., staying updated with industry trends", "..., assisting with interviews and onboarding new engineers"). A bullet that is the original sentence plus a trailing JD clause is a FAILURE. Adding a second sentence after the original one ("... Implemented observability practices including logging, monitoring, and alerting.") is the SAME failure: every bullet must be ONE newly written sentence. Never use filler such as "Experience with ...", "Proficient in ...", "Familiarity with ...", or "Strong communication skills" in a bullet; show the work instead.
 5. **Do not copy JD sentences.** Paraphrase JD responsibilities into concrete engineering work; never paste a JD sentence or a long JD fragment into a bullet or the summary.
 6. **No repetition.** Use each JD responsibility or phrase (for example "logging, monitoring, and alerting", "code reviews", "mentoring") in at most one bullet per role and at most two bullets in the whole resume.
 7. **Match the role's level.** Leadership, mentoring, hiring, onboarding, architecture ownership, and technical-strategy claims go only in senior or lead roles. Intern and junior roles get hands-on implementation work only.
-8. **Summary:** describe the candidate, not the employer. Do not mention the hiring company, its industry, or its mission (no "for a health and wellness platform"), and do not end with a clause about the target job.
+8. **Summary:** write it in resume style with no pronouns (never "I", "I am", "my"), and describe the candidate, not the employer. Do not mention the hiring company, its industry, or its mission (no "for a health and wellness platform"), and do not end with a clause about the target job.
 9. **Still protected:** do not invent metrics, numbers, team sizes, employers, job titles, dates, degrees, or certifications. Sections 2 and 12 still apply to those.
 
 This rule overrides any "do not claim unsupported technologies" wording in Sections 5, 7, 9, 10, and 17 for JD skills only.
@@ -1646,7 +1646,9 @@ def _build_tailor_user_msg(resume_text: str, prompt_text: str, jd_text: str, det
    skills in the Summary, and make every JD skill you added to Skills appear in at least one
    Experience bullet, worked into the candidate's real work (extend existing bullets first; add at
    most two new bullets per role). This overrides rule 5's "never invent" for JD skills. Weave skills
-   into each bullet's main action — never append JD phrases to the end of a bullet with a comma, never
+   into each bullet's main action — every bullet is ONE newly written sentence (never the original
+   sentence plus an added sentence), no "Experience with"/"Proficient in" filler, no first person in
+   the Summary — never append JD phrases to the end of a bullet with a comma, never
    paste JD sentences, and never repeat a JD phrase in more than two bullets. Leadership, mentoring,
    hiring, and onboarding claims go only in senior roles, never intern/junior roles. The Summary must
    not mention the hiring company or its industry. Never put a technology in a role dated before it
@@ -2402,6 +2404,66 @@ def _skills_unchanged(resume_json: dict, original_text: str) -> bool:
     return len(new) < 2
 
 
+# Filler the model uses to bolt JD requirements onto a bullet instead of rewriting it.
+_FILLER_RE = re.compile(
+    r"\b(experience with|experienced with|proficient in|proficiency (in|with)|familiarity with|"
+    r"familiar with|strong [a-z ]*skills|adept at|skilled in|knowledge of)\b", re.I)
+_FIRST_PERSON_RE = re.compile(r"\b(I|I'm|I am|my|me)\b")
+
+
+def _bullet_quality_issues(resume_json: dict, original_text: str) -> list[str]:
+    """Bullets that are the original sentence plus a bolted-on extra sentence, bullets using
+    resume filler ("Experience with ..."), and a first-person Summary. Each issue is a short
+    human-readable line the retry prompt can quote back to the model."""
+    orig = re.sub(r"\s+", " ", original_text or "").lower()
+    issues = []
+    for s in (resume_json.get("sections") or []):
+        if not isinstance(s, dict):
+            continue
+        if s.get("type") == "text":
+            content = str(s.get("content", "")).replace("[[", "").replace("]]", "")
+            if _FIRST_PERSON_RE.search(content):
+                issues.append(f'{s.get("heading", "Summary")} is written in the first person ("I", "my") — use resume style with no pronouns.')
+            continue
+        if s.get("type") not in ("experience", "projects"):
+            continue
+        for it in (s.get("items") or []):
+            if not isinstance(it, dict):
+                continue
+            for b in (it.get("bullets") or []):
+                if not isinstance(b, str):
+                    continue
+                clean = re.sub(r"\s+", " ", b.replace("[[", "").replace("]]", "")).strip()
+                sentences = re.split(r"(?<=[.!?])\s+(?=[A-Z])", clean)
+                head = sentences[0].rstrip(".").lower()
+                tail = " ".join(sentences[1:]).lower()
+                if len(sentences) > 1 and len(head) >= 30 and head in orig and tail.rstrip(".") not in orig:
+                    issues.append(f'Original bullet with a sentence bolted on — rewrite it as ONE new sentence: "{clean}"')
+                elif _FILLER_RE.search(clean):
+                    issues.append(f'Filler phrase ("Experience with...", "Proficient in...") — show the work instead: "{clean}"')
+    return issues
+
+
+def _dedupe_skills(resume_json: dict) -> None:
+    """Drop repeated skills (case-insensitive, ignoring [[ ]] marks) across all skills
+    categories, keeping the first occurrence."""
+    seen = set()
+    for s in (resume_json.get("sections") or []):
+        if not isinstance(s, dict) or s.get("type") != "skills":
+            continue
+        for it in (s.get("items") or []):
+            if not isinstance(it, dict) or not isinstance(it.get("items"), str):
+                continue
+            kept = []
+            # Split on commas that are not inside parentheses.
+            for part in re.split(r",\s*(?![^()]*\))", it["items"]):
+                key = re.sub(r"\s+", " ", part.replace("[[", "").replace("]]", "")).strip().lower()
+                if key and key not in seen:
+                    seen.add(key)
+                    kept.append(part.strip())
+            it["items"] = ", ".join(kept)
+
+
 # ─────────────────────────────────────────────
 # ATS keyword guard (model-independent)
 # ─────────────────────────────────────────────
@@ -2608,29 +2670,36 @@ def tailor_resume(
         except Exception as e:
             print(f"[tailor-guard] verbatim retry failed ({e}); keeping previous response.")
 
-    # Skills guard: the model often leaves the Skills section exactly as it was. Retry once
-    # demanding the Section 6.G rewrite.
-    if _skills_unchanged(data, resume_text):
-        print("[tailor-guard] skills section unchanged; retrying with a skills rewrite demand.")
+    # Quality guard: the model often leaves Skills untouched, or "tailors" bullets by keeping
+    # the original sentence and bolting a JD sentence onto it. One retry quoting the exact
+    # problems back covers both, so this costs at most one extra call.
+    def _quality_problems(d):
+        probs = _bullet_quality_issues(d, resume_text)
+        if _skills_unchanged(d, resume_text):
+            probs.insert(0, "The SKILLS section is unchanged — rewrite it per Section 6.G.")
+        return probs
+
+    problems = _quality_problems(data)
+    if len(problems) >= 2 or (problems and problems[0].startswith("The SKILLS")):
+        print(f"[tailor-guard] {len(problems)} quality problems; retrying with them listed.")
         extra = (
-            "MANDATORY FIX — you left the SKILLS section unchanged. Rewrite it per Section 6.G: ADD "
-            "EVERY technology, tool, platform, and practice named in the job description to the "
-            "Skills section, use the JD's exact spelling, put the most JD-relevant "
-            "category first and JD-matching items first in each category, and mark changes with [[ ]]. "
-            "Keep everything else as tailored. Return the full resume now."
+            "MANDATORY FIX — the previous attempt had these problems. Fix EVERY one, keep everything "
+            "else as tailored, and return the full resume:\n- " + "\n- ".join(problems[:25]) +
+            "\nEach bullet must be ONE rewritten sentence with the JD skills worked into its main "
+            "action — not the original sentence followed by an extra sentence."
         )
         try:
             retry = _do_tailor_call(api_key, resume_text, prompt_text, jd_text, provider,
                                     detected_sections, model, base_url, extra_instruction=extra)
-            if (not _skills_unchanged(retry, resume_text)
+            if (len(_quality_problems(retry)) < len(problems)
                     and (not detected_sections or _has_all_sections(retry, data))
                     and not _experience_mostly_verbatim(retry, resume_text)
                     and _count_result_bullets(retry) >= _count_result_bullets(data) * 0.9):
                 data = retry
             else:
-                print("[tailor-guard] skills retry didn't improve; keeping previous response.")
+                print("[tailor-guard] quality retry didn't improve; keeping previous response.")
         except Exception as e:
-            print(f"[tailor-guard] skills retry failed ({e}); keeping previous response.")
+            print(f"[tailor-guard] quality retry failed ({e}); keeping previous response.")
 
     # ATS guard: keep coverage of the JD keywords the candidate genuinely has >= 90%,
     # whichever model was used.
@@ -2656,6 +2725,7 @@ def tailor_resume(
             print(f"[ats-guard] retry failed ({e}); keeping previous response.")
         _ats_fill_skills(data, _ats_missing(data, keywords), jd_text)
 
+    _dedupe_skills(data)
     return data
 
 
