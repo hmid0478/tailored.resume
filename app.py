@@ -2500,6 +2500,22 @@ _KNOWN_TECH = {
 }
 
 
+_NON_SKILL_WORDS_RE = re.compile(
+    r"\b(coaching|feedback|onboarding|hiring|interviews?|user needs|knowledge sharing|"
+    r"prototypes|experiments|preferred|shipping|elevate|bottlenecks|years|experience|"
+    r"proficiency|familiarity|within and across)\b", re.I)
+
+
+def _is_real_skill(item: str) -> bool:
+    """A Skills entry should be a short keyword ("Kubernetes", "Event-Driven Architecture"),
+    not a pasted JD sentence or a responsibility. Parenthesised detail doesn't count toward
+    the length, so "vector search (Pinecone, Weaviate)" stays."""
+    item = item.strip()
+    if item.lower() in _NON_SKILL_ITEMS or _NON_SKILL_WORDS_RE.search(item):
+        return False
+    return len(re.sub(r"\([^)]*\)", "", item).split()) <= 4
+
+
 def _skills_cleanup(resume_json: dict, jd_text: str) -> None:
     """Deterministic Skills fixes the model is unreliable at: drop responsibility/soft-skill
     items, then add any named JD technology still missing from the Skills section (Section
@@ -2514,7 +2530,7 @@ def _skills_cleanup(resume_json: dict, jd_text: str) -> None:
             if not isinstance(it, dict) or not isinstance(it.get("items"), str):
                 continue
             parts = [p.strip() for p in re.split(r",\s*(?![^()]*\))", it["items"])]
-            parts = [p for p in parts if p and p.replace("[[", "").replace("]]", "").strip().lower() not in _NON_SKILL_ITEMS]
+            parts = [p for p in parts if p and _is_real_skill(p.replace("[[", "").replace("]]", ""))]
             it["items"] = ", ".join(parts)
             have += " " + it["items"].replace("[[", "").replace("]]", "").lower()
     jd = (jd_text or "").lower()
