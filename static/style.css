@@ -2183,3 +2183,13 @@ body.modal-open {
 .qa-dialog .qa-results {
   max-height: 55vh;
 }
+
+.kbd-hint {
+  font-family: inherit;
+  font-size: 0.68rem;
+  font-weight: 500;
+  padding: 1px 6px;
+  margin-left: 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.18);
+}

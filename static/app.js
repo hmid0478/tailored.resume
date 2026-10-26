@@ -987,6 +987,7 @@ async function runQA({ questionsEl, btn, loadingEl, resultsEl, hintEl, buildRequ
     return showError(err.message);
   }
 
+  const label = btn.innerHTML;   // keeps the Ctrl+Enter hint
   btn.disabled = true;
   btn.textContent = "Generating...";
   loadingEl.style.display = "flex";
@@ -1002,10 +1003,21 @@ async function runQA({ questionsEl, btn, loadingEl, resultsEl, hintEl, buildRequ
     showError(err.message);
   } finally {
     btn.disabled = false;
-    btn.textContent = "Generate Answers";
+    btn.innerHTML = label;
     loadingEl.style.display = "none";
   }
 }
+
+// Ctrl+Enter (Cmd+Enter on Mac) in a questions box starts generating.
+[["qa-questions", "qa-submit-btn"], ["qa-modal-questions", "qa-modal-submit-btn"]].forEach(([boxId, btnId]) => {
+  document.getElementById(boxId).addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      const btn = document.getElementById(btnId);
+      if (!btn.disabled) btn.click();
+    }
+  });
+});
 
 const qaSubmitBtn = document.getElementById("qa-submit-btn");
 qaSubmitBtn.addEventListener("click", () => runQA({
