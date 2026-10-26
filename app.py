@@ -830,6 +830,23 @@ If the candidate's skills section needs additional keywords, look first for genu
 
 If the application supports a separate skill-gap report, identify unsupported JD requirements there instead of placing them in the resume.
 
+### G. The skills section MUST change for every JD (mandatory)
+
+Returning the original skills section unchanged, or with only cosmetic edits, is a FAILURE. For every JD, perform ALL of the following:
+
+1. **Add JD skills.** Go through every technology, tool, platform, concept, practice, and methodology named in the JD. Add each one to the skills section when ANY of these is true:
+   - It is mentioned or demonstrated anywhere in the original resume (summary, experience, projects, education), even if it was missing from the original skills list.
+   - It is part of the same ecosystem as a technology the candidate demonstrably uses (for example, Express or NestJS for a Node.js backend developer, Jest or Pytest for a candidate who writes automated tests in that language, FastAPI or Flask for a Python backend developer, Helm for a Kubernetes user, CloudWatch for an AWS user).
+   - It is an engineering concept, practice, or methodology that the candidate's documented work clearly involves (for example, microservices, REST API design, system design, CI/CD, code review, unit testing, performance tuning, scalability, observability, Agile/Scrum, cross-functional collaboration, security best practices).
+   Do NOT add a competing platform the candidate has no evidence for (AWS for an Azure-only candidate, Go for a candidate with no Go, Kubernetes for a Docker-only candidate).
+2. **Use the JD's exact spelling** for every skill (for example, "Node.js" not "Node", "PostgreSQL" not "Postgres", "CI/CD" not "pipelines") and replace the resume's synonyms with the JD's terms.
+3. **Reorder categories** so the category most central to the JD comes first.
+4. **Reorder items inside each category** so JD-matching skills come first, in roughly the order of their importance in the JD.
+5. **Rename category labels** to match the JD's focus when helpful (for example, "Backend & Distributed Systems" becomes "Backend, APIs & Microservices" for an API-heavy backend role). Add a new category when the JD has a clear focus area the existing categories do not cover, and the candidate has supporting skills for it.
+6. **Trim clutter.** Move skills that are irrelevant to this JD to the end of their category, or remove them when they distract, but keep any skill that an experience or project entry depends on.
+
+Keep the same output structure (category + comma-separated items) and a similar overall length, adding at most about 30% more items. Mark every added, renamed, or reworded skill with [[ ]].
+
 ---
 
 ## 7. PROFESSIONAL EXPERIENCE REWRITING
@@ -1597,7 +1614,12 @@ def _build_tailor_user_msg(resume_text: str, prompt_text: str, jd_text: str, det
    or phrase you changed, reworded, or added. Example: "[[Architected]] scalable [[React and
    TypeScript]] services [[serving 10k+ users]]". If an Experience bullet has no [[ ]] marks, you did
    not tailor it — go back and rewrite it. Never mark the name, job title, or contact details.
-   Use the exact characters [[ and ]], and always close every [[ with a matching ]]."""
+   Use the exact characters [[ and ]], and always close every [[ with a matching ]].
+9. TAILOR THE SKILLS SECTION (mandatory — follow Section 6.G of the system prompt): ADD the JD's
+   skills, tools, and practices the candidate's resume supports (including ones only shown in
+   experience/projects, same-ecosystem tools, and engineering practices their work involves),
+   use the JD's exact spelling, put the most JD-relevant category first, and put JD-matching
+   items first inside each category. Returning the Skills section unchanged is WRONG."""
 
     user_msg = f"""Here are the two inputs:
 
@@ -2325,6 +2347,30 @@ def _experience_mostly_verbatim(resume_json: dict, original_text: str) -> bool:
     return verbatim >= len(long_bullets) * 0.6
 
 
+def _skills_unchanged(resume_json: dict, original_text: str) -> bool:
+    """True if the tailored Skills section adds (almost) nothing that isn't already in the
+    original resume text — i.e. the model left Skills as-is instead of tailoring it to the JD."""
+    orig = re.sub(r"\s+", " ", original_text or "").lower()
+    if not orig:
+        return False
+    skills = []
+    for s in (resume_json.get("sections") or []):
+        if not isinstance(s, dict) or s.get("type") != "skills":
+            continue
+        for it in (s.get("items") or []):
+            if isinstance(it, dict):
+                skills += str(it.get("items", "")).split(",")
+                skills.append(str(it.get("category", "")))
+            elif isinstance(it, str):
+                skills += it.split(",")
+    skills = [re.sub(r"\s+", " ", k.replace("[[", "").replace("]]", "")).strip().lower() for k in skills]
+    skills = [k for k in skills if k]
+    if len(skills) < 5:
+        return False
+    new = [k for k in skills if k not in orig]
+    return len(new) < 2
+
+
 # ─────────────────────────────────────────────
 # ATS keyword guard (model-independent)
 # ─────────────────────────────────────────────
@@ -2530,6 +2576,31 @@ def tailor_resume(
                 print("[tailor-guard] verbatim retry didn't improve; keeping previous response.")
         except Exception as e:
             print(f"[tailor-guard] verbatim retry failed ({e}); keeping previous response.")
+
+    # Skills guard: the model often leaves the Skills section exactly as it was. Retry once
+    # demanding the Section 6.G rewrite.
+    if _skills_unchanged(data, resume_text):
+        print("[tailor-guard] skills section unchanged; retrying with a skills rewrite demand.")
+        extra = (
+            "MANDATORY FIX — you left the SKILLS section unchanged. Rewrite it per Section 6.G: ADD "
+            "the job description's skills, tools, and practices that the candidate's resume supports "
+            "(including ones only shown in experience/projects, same-ecosystem tools, and engineering "
+            "practices their work involves), use the JD's exact spelling, put the most JD-relevant "
+            "category first and JD-matching items first in each category, and mark changes with [[ ]]. "
+            "Keep everything else as tailored. Return the full resume now."
+        )
+        try:
+            retry = _do_tailor_call(api_key, resume_text, prompt_text, jd_text, provider,
+                                    detected_sections, model, base_url, extra_instruction=extra)
+            if (not _skills_unchanged(retry, resume_text)
+                    and (not detected_sections or _has_all_sections(retry, data))
+                    and not _experience_mostly_verbatim(retry, resume_text)
+                    and _count_result_bullets(retry) >= _count_result_bullets(data) * 0.9):
+                data = retry
+            else:
+                print("[tailor-guard] skills retry didn't improve; keeping previous response.")
+        except Exception as e:
+            print(f"[tailor-guard] skills retry failed ({e}); keeping previous response.")
 
     # ATS guard: keep coverage of the JD keywords the candidate genuinely has >= 90%,
     # whichever model was used.
